@@ -9,6 +9,7 @@ const TRENDING_CFG: TrendingConfig = {
   pollSeconds: 45,
   milestones: [2, 5, 10],
   dumpDrawdownPct: 50,
+  maxPostsPerCycle: 10,
 };
 
 const FOLLOWUP_CFG: FollowUpConfig = {

@@ -70,6 +70,9 @@ export interface TrendingConfig {
   pollSeconds: number;
   milestones: number[];
   dumpDrawdownPct: number;
+  /** Max brand-new posts sent per runCycle call (Task G4) — throttles bursts; excess
+   * gate-passing tokens are simply picked up again on a later cycle. */
+  maxPostsPerCycle: number;
 }
 
 export interface SecurityConfig {

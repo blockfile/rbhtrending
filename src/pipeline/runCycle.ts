@@ -35,9 +35,21 @@ export interface RunCycleDeps {
  * that clears the trending gate. Every external call (the gmgn fetch, and each token's
  * processing) is individually try/caught so one bad token or one bad cycle never kills the
  * process or blocks its siblings.
+ *
+ * Task G4 — cold-start silent seed + per-cycle post cap: a live trending channel should alert
+ * tokens as they NEWLY start trending, not dump the ~80 already trending at boot. On the very
+ * first-ever run (`db.postCount() === 0`), a gate-passing token is silently marked as already
+ * posted instead of alerted — this seeds the DB so only tokens that start trending *after* boot
+ * ever alert. On every later cycle, brand-new posts are capped at `maxPostsPerCycle` per cycle
+ * to throttle bursts; anything over the cap is simply picked up again on a later cycle since it
+ * remains gate-passing and unposted. Neither applies to the tracked-token follow-up branch
+ * above, which always runs first and is unaffected.
  */
 export async function runCycle(deps: RunCycleDeps, now: number): Promise<void> {
   const tokens = await fetchTrending(deps.gmgn);
+  const coldStart = deps.db.postCount() === 0;
+  let postedThisCycle = 0;
+  let seeded = 0;
 
   for (const t of tokens) {
     try {
@@ -49,11 +61,27 @@ export async function runCycle(deps: RunCycleDeps, now: number): Promise<void> {
       }
 
       if (passesGate(t, deps.cfg.trending) && !deps.db.alreadyPosted(t.address) && deps.tracker.shouldPost(t.address)) {
+        if (coldStart) {
+          // Silent seed: mark as posted (so it never back-alerts) without sending, tracking, or
+          // even assessing/formatting it — this token was already trending before boot.
+          if (!deps.dry) deps.db.recordPost(t.address, 0, now);
+          seeded++;
+          continue;
+        }
+        if (postedThisCycle >= deps.cfg.trending.maxPostsPerCycle) {
+          continue; // cap reached — deferred to a later cycle, still gate-passing & unposted
+        }
         await postNewTrend(deps, t, now);
+        postedThisCycle++;
       }
     } catch (err) {
       log('error', `runCycle: error processing ${t.address}: ${(err as Error).message}`);
     }
+  }
+
+  if (coldStart) {
+    const verb = deps.dry ? 'would seed' : 'seeded';
+    log('info', `cold start: ${verb} ${seeded} trending tokens (no alerts sent) — will alert new entrants from now`);
   }
 
   try {

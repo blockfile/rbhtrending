@@ -67,4 +67,22 @@ describe('Db', () => {
       expect(db.getPost('0xCCC')).toEqual({ messageId: 111, postedAt: 1000, sponsored: 0 });
     });
   });
+
+  describe('postCount', () => {
+    it('is 0 when no posts have ever been recorded (cold start)', () => {
+      expect(db.postCount()).toBe(0);
+    });
+
+    it('counts recorded posts', () => {
+      db.recordPost('0xAAA', 1, 1000);
+      db.recordPost('0xBBB', 2, 2000);
+      expect(db.postCount()).toBe(2);
+    });
+
+    it('does not double-count an idempotent repeat recordPost for the same address', () => {
+      db.recordPost('0xAAA', 1, 1000);
+      db.recordPost('0xAAA', 2, 2000);
+      expect(db.postCount()).toBe(1);
+    });
+  });
 });

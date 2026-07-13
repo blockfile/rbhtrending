@@ -11,6 +11,7 @@ export function loadConfig(path = 'config.json'): AppConfig {
     ['trending.minBuyers1h', cfg.trending?.minBuyers1h],
     ['trending.pollSeconds', cfg.trending?.pollSeconds],
     ['trending.dumpDrawdownPct', cfg.trending?.dumpDrawdownPct],
+    ['trending.maxPostsPerCycle', cfg.trending?.maxPostsPerCycle],
     ['security.sellTaxDangerPct', cfg.security?.sellTaxDangerPct],
     ['security.sellTaxWarnPct', cfg.security?.sellTaxWarnPct],
     ['security.topHolderWarnPct', cfg.security?.topHolderWarnPct],

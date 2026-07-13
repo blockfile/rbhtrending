@@ -12,6 +12,7 @@ describe('loadConfig', () => {
     expect(cfg.trending.minBuyers1h).toBe(30);
     expect(cfg.trending.pollSeconds).toBe(45);
     expect(cfg.trending.dumpDrawdownPct).toBe(50);
+    expect(cfg.trending.maxPostsPerCycle).toBe(10);
     expect(typeof cfg.trending.minLiquidityUsd).toBe('number');
   });
 
@@ -56,6 +57,7 @@ describe('loadConfig', () => {
           minBuyers1h: 30,
           pollSeconds: 45,
           dumpDrawdownPct: 50,
+          maxPostsPerCycle: 10,
           milestones: [2, 5, 10, 25, 50, 100],
         },
         security: {
@@ -80,6 +82,41 @@ describe('loadConfig', () => {
     }
   });
 
+  it('throws specific error when numeric field is missing (trending.maxPostsPerCycle)', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'rbh-'));
+    try {
+      const cfgPath = join(tmpDir, 'config.json');
+      const malformed = {
+        trending: {
+          minLiquidityUsd: 5000,
+          minVolume1hUsd: 10000,
+          minBuyers1h: 30,
+          pollSeconds: 45,
+          dumpDrawdownPct: 50,
+          milestones: [2, 5, 10, 25, 50, 100],
+        },
+        security: {
+          sellTaxDangerPct: 30,
+          sellTaxWarnPct: 10,
+          topHolderWarnPct: 25,
+        },
+        followUp: {
+          windowMinutes: 120,
+          liveEditSec: 45,
+        },
+        buttons: {
+          chart: true,
+          scan: true,
+          trade: true,
+        },
+      };
+      writeFileSync(cfgPath, JSON.stringify(malformed));
+      expect(() => loadConfig(cfgPath)).toThrow('config.json missing numeric field: trending.maxPostsPerCycle');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it('throws specific error when milestones is empty array', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'rbh-'));
     try {
@@ -91,6 +128,7 @@ describe('loadConfig', () => {
           minBuyers1h: 30,
           pollSeconds: 45,
           dumpDrawdownPct: 50,
+          maxPostsPerCycle: 10,
           milestones: [],
         },
         security: {
@@ -126,6 +164,7 @@ describe('loadConfig', () => {
           minBuyers1h: 30,
           pollSeconds: 45,
           dumpDrawdownPct: 50,
+          maxPostsPerCycle: 10,
           milestones: [2, 5, 'ten', 25, 50, 100],
         },
         security: {
@@ -161,6 +200,7 @@ describe('loadConfig', () => {
           minBuyers1h: 30,
           pollSeconds: 45,
           dumpDrawdownPct: 50,
+          maxPostsPerCycle: 10,
           milestones: [2, 5, 10, 25, 50, 100],
         },
         security: {

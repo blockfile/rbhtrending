@@ -70,6 +70,13 @@ export class Db {
       .run(address, messageId, now);
   }
 
+  /** Total number of posts ever recorded. 0 means "cold start" — nothing has been posted yet,
+   * used by runCycle (Task G4) to silently seed the current gate-passers instead of alerting. */
+  postCount(): number {
+    const row = this.db.prepare('SELECT COUNT(*) AS c FROM posts').get() as { c: number };
+    return row.c;
+  }
+
   getPost(address: string): PostRow | null {
     const row = this.db
       .prepare(
