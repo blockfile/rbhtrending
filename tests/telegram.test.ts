@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  escapeHtml, formatCard, formatFollowUp, buildButtons, Telegram,
+  escapeHtml, formatCard, formatFollowUp, buildButtons, Telegram, ageStr,
   type FollowUpData,
 } from '../src/telegram';
 import type { TokenCard, ButtonsConfig } from '../src/types';
@@ -79,34 +79,61 @@ const CARD: TokenCard = {
   website: undefined,
 };
 
+describe('ageStr', () => {
+  const now = 1_700_000_000_000;
+
+  it('formats under 60 minutes as "{n}m"', () => {
+    expect(ageStr(now - 5 * 60_000, now)).toBe('5m');
+    expect(ageStr(now - 59 * 60_000, now)).toBe('59m');
+  });
+
+  it('formats 60 minutes up to 1440 minutes as "{n}h"', () => {
+    expect(ageStr(now - 60 * 60_000, now)).toBe('1h'); // exact 60m boundary rolls to hours
+    expect(ageStr(now - 23 * 60 * 60_000, now)).toBe('23h');
+  });
+
+  it('formats 1440 minutes and beyond as "{n}d"', () => {
+    expect(ageStr(now - 1440 * 60_000, now)).toBe('1d'); // exact 1440m boundary rolls to days
+    expect(ageStr(now - 3 * 1440 * 60_000, now)).toBe('3d');
+  });
+
+  it('returns undefined for 0/absent createdAt so the caller can omit the segment', () => {
+    expect(ageStr(0, now)).toBeUndefined();
+  });
+});
+
 describe('formatCard', () => {
-  it('renders the full card with escaped name, security detail, market data, and tap-copy contract', () => {
+  it('renders the full card with escaped name, score/age, security detail, market data, and tap-copy contract', () => {
     const text = formatCard(CARD);
     expect(text).toContain('🔥 <b>$HOOD</b> • Cool &lt;Token&gt;');
-    expect(text).toContain('🛡 Security: ✅  renounced ✅ · LP 🔒 · verified ✅ · transfers ✅ · honeypot n/a');
-    expect(text).toContain('🏅 Trust: 91/100 (GeckoTerminal)');
-    expect(text).toContain('💰 MC: $184.0k · 💧 Liq: $12.3k');
+    expect(text).toMatch(/⭐ Score: 91\/100 \| ⏱ \d+[mhd]/);
+    expect(text).toContain('💰 MC: $184.0k');
+    expect(text).toContain('💧 Liq: $12.3k');
     expect(text).toContain('📊 Vol 1h: $27.6k • 🪙 fake ~12%');
-    expect(text).toContain('🏆 Top 10 holders: 21%');
+    expect(text).toContain('👥 Holders: 341 | Buyers: 41');
+    expect(text).toContain('🛡 Security: ✅  renounced ✅ · LP 🔒 · verified ✅ · transfers ✅');
+    expect(text).toContain('🏆 Top 10: 21%');
     expect(text).toContain('🐦 X ✅ | TG ✅ | Web ❌');
     expect(text).toContain('<code>0xTOKEN000000000000000000000000000000001</code>');
     expect(text).not.toContain('📈 Now:'); // no live line unless c.live is present
+    expect(text).not.toContain('⚠️'); // fully-clean fixture (safe risk, no false sub-fields) — no flags line
     expect(text).not.toContain('ATH'); // removed entirely — ATH data isn't available (Option-A)
-    expect(text).not.toContain('👥 Holders'); // removed entirely — holders count isn't available
+    expect(text).not.toContain('honeypot');
     expect(text).not.toContain('not measured');
   });
 
-  it('hides the Trust line when gtScore is absent', () => {
-    const text = formatCard({ ...CARD, gtScore: undefined });
-    expect(text).not.toContain('Trust');
+  it('renders ⭐ Score: ?/100 when gtScore is absent, with no age segment when createdAt is 0', () => {
+    const text = formatCard({ ...CARD, gtScore: undefined, createdAt: 0 });
+    expect(text).toContain('⭐ Score: ?/100');
+    expect(text).not.toContain('⏱');
   });
 
-  it('hides the Top 10 holders line when security.topHolderPct is unknown/absent', () => {
+  it('renders 🏆 Top 10: ? when security.topHolderPct is unknown/absent (line is never hidden)', () => {
     const unknown = formatCard({ ...CARD, security: { ...CARD.security!, topHolderPct: 'unknown' } });
-    expect(unknown).not.toContain('Top 10 holders');
+    expect(unknown).toContain('🏆 Top 10: ?');
 
     const noSecurity = formatCard({ ...CARD, security: undefined });
-    expect(noSecurity).not.toContain('Top 10 holders');
+    expect(noSecurity).toContain('🏆 Top 10: ?');
   });
 
   it('renders the live Now line only when c.live is present', () => {
@@ -117,7 +144,8 @@ describe('formatCard', () => {
 
   it('abbreviates large USD values with M/B suffixes', () => {
     const big = formatCard({ ...CARD, fdvUsd: 156176100, liquidityUsd: 10527600 });
-    expect(big).toContain('💰 MC: $156.2M · 💧 Liq: $10.5M');
+    expect(big).toContain('💰 MC: $156.2M');
+    expect(big).toContain('💧 Liq: $10.5M');
     const huge = formatCard({ ...CARD, fdvUsd: 2_400_000_000 });
     expect(huge).toContain('💰 MC: $2.4B');
   });
@@ -149,16 +177,17 @@ describe('formatCard', () => {
     expect(noSecurity).toContain('🛡 Security: ❓');
   });
 
-  it('renders unknown/absent security sub-fields as ?, with honeypot always "n/a", and hides the Top 10 line', () => {
+  it('renders unknown/absent security sub-fields as ?, with no honeypot text, and Top 10/flags left un-triggered by "unknown"', () => {
     const text = formatCard({
       ...CARD,
       security: { sellTaxPct: 'unknown', topHolderPct: 'unknown', riskLevel: 'warn' },
     });
-    expect(text).toContain('🛡 Security: ⚠️  renounced ? · LP ? · verified ? · transfers ? · honeypot n/a');
-    expect(text).not.toContain('Top 10 holders');
+    expect(text).toContain('🛡 Security: ⚠️  renounced ? · LP ? · verified ? · transfers ?');
+    expect(text).not.toContain('honeypot');
+    expect(text).not.toContain('⚠️ can'); // 'unknown' sub-fields never trigger a flag (only explicit === false does)
   });
 
-  it('renders LP/verified/transfers as ❌ (not the old ⚠️) when explicitly false', () => {
+  it('renders LP/verified/transfers/renounced as ❌ (not the old ⚠️) when explicitly false, and lists all four as flags', () => {
     const text = formatCard({
       ...CARD,
       security: {
@@ -170,19 +199,37 @@ describe('formatCard', () => {
         riskLevel: 'danger',
       },
     });
-    expect(text).toContain('🛡 Security: 🧨  renounced ❌ · LP ❌ · verified ❌ · transfers ❌ · honeypot n/a');
+    expect(text).toContain('🛡 Security: 🧨  renounced ❌ · LP ❌ · verified ❌ · transfers ❌');
+    expect(text).not.toContain('honeypot');
+    expect(text).toContain("⚠️ can't sell · LP not locked · owner active · unverified");
   });
 
-  it('renders unknown/absent display fields as ? (MC, Liq, Vol) and never shows ATH/Holders', () => {
+  it('shows no ⚠️ flags line when every security sub-field is true (fully clean)', () => {
+    const text = formatCard({
+      ...CARD,
+      security: {
+        ...CARD.security!,
+        lpBurnedOrLocked: true,
+        verified: true,
+        transferable: true,
+        ownerRenounced: true,
+        riskLevel: 'safe',
+      },
+    });
+    expect(text).not.toContain('⚠️');
+  });
+
+  it('renders unknown/absent display fields as ? (MC, Liq, Vol, Holders, Buyers) and never shows ATH', () => {
     const text = formatCard({
       ...CARD,
       fdvUsd: 'unknown', athUsd: 'unknown', liquidityUsd: 'unknown',
-      volume1hUsd: 'unknown', holders: 'unknown',
+      volume1hUsd: 'unknown', holders: 'unknown', buyers1h: 'unknown',
     });
-    expect(text).toContain('💰 MC: ? · 💧 Liq: ?');
+    expect(text).toContain('💰 MC: ?');
+    expect(text).toContain('💧 Liq: ?');
     expect(text).toContain('📊 Vol 1h: ?');
+    expect(text).toContain('👥 Holders: ? | Buyers: ?');
     expect(text).not.toContain('ATH');
-    expect(text).not.toContain('Holders');
   });
 
   it('omits the fake-volume segment when fakeVolumePct is unknown or absent, shows it when known', () => {
@@ -200,6 +247,18 @@ describe('formatCard', () => {
   it('marks socials ❌ when absent', () => {
     const text = formatCard({ ...CARD, twitter: undefined, telegram: undefined, website: 'https://hood.fun' });
     expect(text).toContain('🐦 X ❌ | TG ❌ | Web ✅');
+  });
+
+  it('places blank lines exactly around the MC/Liq/Vol/Holders block, the Top-10 block, and before the contract', () => {
+    const lines = formatCard(CARD).split('\n');
+    const mcIdx = lines.findIndex((l) => l.startsWith('💰 MC:'));
+    const secIdx = lines.findIndex((l) => l.startsWith('🛡 Security:'));
+    const socialIdx = lines.findIndex((l) => l.startsWith('🐦 X'));
+    const codeIdx = lines.findIndex((l) => l.startsWith('<code>'));
+    expect(lines[mcIdx - 1]).toBe('');
+    expect(lines[secIdx - 1]).toBe('');
+    expect(lines[socialIdx - 1]).toBe('');
+    expect(lines[codeIdx - 1]).toBe('');
   });
 });
 

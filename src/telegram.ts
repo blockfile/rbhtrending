@@ -56,9 +56,33 @@ function usdOrQ(v: number | 'unknown' | undefined): string {
   return `$${v.toFixed(0)}`;
 }
 
+function pctOrQ(v: number | 'unknown' | undefined): string {
+  if (v === undefined || v === 'unknown') return '?';
+  return `${v.toFixed(0)}%`;
+}
+
+function numOrQ(v: number | 'unknown' | undefined): string {
+  if (v === undefined || v === 'unknown') return '?';
+  return `${v}`;
+}
+
 function boolMark(v: boolean | 'unknown' | undefined, whenTrue: string, whenFalse: string): string {
   if (v === undefined || v === 'unknown') return '?';
   return v ? whenTrue : whenFalse;
+}
+
+/**
+ * Compact age from a unix-ms `createdAt`: "{n}m" under 60 minutes, "{n}h" under 1440 minutes
+ * (24h), else "{n}d". Returns `undefined` for a falsy `createdAt` (0/absent — unknown age) so
+ * the caller can omit the segment entirely. `now` is a param (rather than reading `Date.now()`
+ * internally) so this is directly unit-testable at fixed times.
+ */
+export function ageStr(createdAt: number, now: number): string | undefined {
+  if (!createdAt) return undefined;
+  const minutes = Math.max(0, Math.floor((now - createdAt) / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}h`;
+  return `${Math.floor(minutes / 1440)}d`;
 }
 
 /** ✅/❌ presence mark for optional social links (absent = ❌, not '?' — these are truly optional, not fetch failures). */
@@ -74,10 +98,12 @@ const SECURITY_EMOJI: Record<'safe' | 'warn' | 'danger' | 'unknown', string> = {
 };
 
 /**
- * Render a TokenCard as the Telegram HTML card body. Any field that is `'unknown'` or absent
- * renders as `?` (or, for the fake-volume segment, is omitted entirely); genuinely
- * unavailable fields (Trust, Top 10 holders) are HIDDEN entirely rather than printing a `?` —
- * a missing sub-check never upgrades the displayed security verdict toward "safe".
+ * Render a TokenCard as the Telegram HTML card body — matches the Solana bot's `formatAlert`
+ * layout, adapted to this chain's field set. Any field that is `'unknown'` or absent renders
+ * as `?` (or, for the fake-volume segment, is omitted entirely); a missing sub-check never
+ * upgrades the displayed security verdict toward "safe". The optional live line, ⚠️ flags
+ * line, and ⏱ age segment are each omitted entirely when not applicable, per the reference
+ * layout.
  */
 export function formatCard(c: TokenCard): string {
   const s = c.security;
@@ -86,38 +112,45 @@ export function formatCard(c: TokenCard): string {
   const securityBadge = SECURITY_EMOJI[risk];
 
   // v1 Option-A field set: no honeypot/tax simulation on this chain (no standard router) —
-  // the badge instead reports renounce/LP/verified/transferability, and honeypot is always
-  // labeled "n/a" (honest: it's not measured) rather than rendering a stale/fake ✅.
+  // the badge instead reports renounce/LP/verified/transferability.
   const renounced = boolMark(s?.ownerRenounced, '✅', '❌');
   const lp = boolMark(s?.lpBurnedOrLocked, '🔒', '❌');
   const verified = boolMark(s?.verified, '✅', '❌');
   const transfers = boolMark(s?.transferable, '✅', '❌');
 
+  const scoreStr = typeof c.gtScore === 'number' ? `${c.gtScore}/100` : '?/100';
+  const age = ageStr(c.createdAt, Date.now());
+  const ageSegment = age ? ` | ⏱ ${age}` : '';
+
+  // Only an explicit `=== false` pushes a flag — 'unknown'/absent never upgrades OR downgrades
+  // via this line; the 🛡 Security line already covers the "we don't know" case with '?'.
+  const flags: string[] = [];
+  if (s?.transferable === false) flags.push("can't sell");
+  if (s?.lpBurnedOrLocked === false) flags.push('LP not locked');
+  if (s?.ownerRenounced === false) flags.push('owner active');
+  if (s?.verified === false) flags.push('unverified');
+
   const lines = [
     `${grade} <b>$${escapeHtml(c.symbol)}</b> • ${escapeHtml(c.name)}`,
-    `🛡 Security: ${securityBadge}  renounced ${renounced} · LP ${lp} · verified ${verified} · transfers ${transfers} · honeypot n/a`,
+    `⭐ Score: ${scoreStr}${ageSegment}`,
   ];
 
-  if (typeof c.gtScore === 'number') {
-    lines.push(`🏅 Trust: ${c.gtScore}/100 (GeckoTerminal)`);
-  }
   if (c.live) lines.push(`📈 Now: ${usdOrQ(c.live.nowUsd)} • ${c.live.multiple.toFixed(1)}X`);
-
-  lines.push(`💰 MC: ${usdOrQ(c.fdvUsd)} · 💧 Liq: ${usdOrQ(c.liquidityUsd)}`);
+  if (flags.length) lines.push(`⚠️ ${flags.map(escapeHtml).join(' · ')}`);
 
   const fake = c.fakeVolumePct;
   lines.push(
+    '',
+    `💰 MC: ${usdOrQ(c.fdvUsd)}`,
+    `💧 Liq: ${usdOrQ(c.liquidityUsd)}`,
     fake !== undefined && fake !== 'unknown'
       ? `📊 Vol 1h: ${usdOrQ(c.volume1hUsd)} • 🪙 fake ~${fake.toFixed(0)}%`
       : `📊 Vol 1h: ${usdOrQ(c.volume1hUsd)}`,
-  );
-
-  const topHolderPct = s?.topHolderPct;
-  if (typeof topHolderPct === 'number') {
-    lines.push(`🏆 Top 10 holders: ${topHolderPct.toFixed(0)}%`);
-  }
-
-  lines.push(
+    `👥 Holders: ${numOrQ(c.holders)} | Buyers: ${numOrQ(c.buyers1h)}`,
+    '',
+    `🛡 Security: ${securityBadge}  renounced ${renounced} · LP ${lp} · verified ${verified} · transfers ${transfers}`,
+    `🏆 Top 10: ${pctOrQ(s?.topHolderPct)}`,
+    '',
     `🐦 X ${mark(c.twitter)} | TG ${mark(c.telegram)} | Web ${mark(c.website)}`,
     '',
     `<code>${c.address}</code>`, // tap to copy — links are the buttons below
