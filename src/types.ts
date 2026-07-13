@@ -15,6 +15,13 @@ export interface Security {
   sellTaxPct: number | 'unknown';
   topHolderPct: number | 'unknown';
   riskLevel: 'safe' | 'warn' | 'danger' | 'unknown';
+  // Richer on-chain security detail (Task 6's securityScan). Optional because that scan isn't
+  // wired in yet; the Telegram card renders '?' for anything absent and never lets a missing
+  // sub-check upgrade the displayed verdict toward "safe".
+  honeypot?: boolean | 'unknown';
+  buyTaxPct?: number | 'unknown';
+  lpBurnedOrLocked?: boolean | 'unknown';
+  ownerRenounced?: boolean | 'unknown';
 }
 
 export interface TokenCard {
@@ -29,6 +36,17 @@ export interface TokenCard {
   poolAddress: string;
   createdAt: number;
   security?: Security;
+  // Enrichment fields no current source produces yet (holders/ATH/fake-volume/socials need a
+  // pipeline stage beyond Tasks 1-7). Optional so the Telegram card layer can render them ('?'
+  // when unknown, omitted where the brief calls for that) without blocking on later tasks.
+  athUsd?: number | 'unknown';
+  holders?: number | 'unknown';
+  fakeVolumePct?: number | 'unknown';
+  twitter?: string;
+  telegram?: string;
+  website?: string;
+  /** Present only while a live-edit ticker is driving this card (see followUp.liveEditSec). */
+  live?: { nowUsd: number; multiple: number };
 }
 
 export interface TrendingConfig {
