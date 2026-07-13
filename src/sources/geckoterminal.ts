@@ -107,6 +107,49 @@ export interface GeckoTerminalOptions {
   fetchFn?: typeof fetch;
 }
 
+export interface GeckoTokenInfo {
+  imageUrl?: string;
+  twitter?: string;
+  telegram?: string;
+  website?: string;
+  gtScore?: number;
+  topHolderPct?: number;
+}
+
+/** Module-scoped cache for tokenInfo — token info (socials/trust score/holder concentration)
+ * barely changes cycle to cycle, so re-fetching it every poll would just burn rate-limit budget
+ * for no benefit. Shared across GeckoTerminal instances, same pattern as the rateLimit() gate
+ * above. 15 minutes comfortably outlives a poll cycle (pollSeconds is on the order of tens of
+ * seconds) while still refreshing well within a trading session. */
+const TOKEN_INFO_TTL_MS = 15 * 60 * 1000;
+const tokenInfoCache = new Map<string, { data: GeckoTokenInfo; expiresAt: number }>();
+
+function mapTokenInfo(attrs: any): GeckoTokenInfo {
+  const info: GeckoTokenInfo = {};
+
+  if (typeof attrs.image_url === 'string' && attrs.image_url) {
+    info.imageUrl = attrs.image_url;
+  }
+  if (typeof attrs.twitter_handle === 'string' && attrs.twitter_handle) {
+    info.twitter = `https://x.com/${attrs.twitter_handle.replace(/^@/, '')}`;
+  }
+  if (typeof attrs.telegram_handle === 'string' && attrs.telegram_handle) {
+    info.telegram = `https://t.me/${attrs.telegram_handle}`;
+  }
+  if (Array.isArray(attrs.websites) && typeof attrs.websites[0] === 'string' && attrs.websites[0]) {
+    info.website = attrs.websites[0];
+  }
+  if (typeof attrs.gt_score === 'number' && Number.isFinite(attrs.gt_score)) {
+    info.gtScore = Math.round(attrs.gt_score);
+  }
+  const topHolderPct = parseFloat(attrs.holders?.distribution_percentage?.top_10);
+  if (Number.isFinite(topHolderPct)) {
+    info.topHolderPct = topHolderPct;
+  }
+
+  return info;
+}
+
 export class GeckoTerminal {
   private apiKey: string;
   private fetchFn: typeof fetch;
@@ -192,5 +235,38 @@ export class GeckoTerminal {
     }
 
     return data.data.map((raw: any) => parsePool(raw)).filter((p: PoolActivity | null) => p !== null);
+  }
+
+  /**
+   * Best-effort token-info lookup (socials, logo, gt_score trust rating, top-10 holder
+   * concentration) — GET /tokens/{address}/info, via the same fetchWithRetry (rate limiter +
+   * Authorization header + timeout) the poll endpoints use. Never throws: any failure (non-ok
+   * response, thrown network error, malformed body) resolves to `{}` so a bad token-info fetch
+   * never blocks or fails a card. Cached per lowercased address for 15 minutes (see
+   * tokenInfoCache above) to avoid re-hitting a rate-limited endpoint on every poll cycle.
+   */
+  async tokenInfo(address: string): Promise<GeckoTokenInfo> {
+    const key = address.toLowerCase();
+    const now = Date.now();
+    const cached = tokenInfoCache.get(key);
+    if (cached && cached.expiresAt > now) {
+      return cached.data;
+    }
+
+    try {
+      const url = `${this.baseUrl}/tokens/${address}/info`;
+      const response = await this.fetchWithRetry(url);
+      if (!response.ok) return {};
+
+      const data = await response.json();
+      const attrs = data?.data?.attributes;
+      if (!attrs || typeof attrs !== 'object') return {};
+
+      const info = mapTokenInfo(attrs);
+      tokenInfoCache.set(key, { data: info, expiresAt: now + TOKEN_INFO_TTL_MS });
+      return info;
+    } catch {
+      return {};
+    }
   }
 }

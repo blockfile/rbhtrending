@@ -73,6 +73,7 @@ const CARD: TokenCard = {
   athUsd: 240000,
   holders: 341,
   fakeVolumePct: 12,
+  gtScore: 91,
   twitter: 'https://x.com/dev',
   telegram: 'https://t.me/c',
   website: undefined,
@@ -82,15 +83,30 @@ describe('formatCard', () => {
   it('renders the full card with escaped name, security detail, market data, and tap-copy contract', () => {
     const text = formatCard(CARD);
     expect(text).toContain('🔥 <b>$HOOD</b> • Cool &lt;Token&gt;');
-    expect(text).toContain('🛡 Security: ✅  renounced ✅ · LP 🔒 · verified ✅ · transfers ✅ · honeypot/tax: not measured');
-    expect(text).toContain('💰 MC: $184.0k • ⇡ ATH $240.0k');
-    expect(text).toContain('💧 Liq: $12.3k');
+    expect(text).toContain('🛡 Security: ✅  renounced ✅ · LP 🔒 · verified ✅ · transfers ✅ · honeypot n/a');
+    expect(text).toContain('🏅 Trust: 91/100 (GeckoTerminal)');
+    expect(text).toContain('💰 MC: $184.0k · 💧 Liq: $12.3k');
     expect(text).toContain('📊 Vol 1h: $27.6k • 🪙 fake ~12%');
-    expect(text).toContain('👥 Holders: 341');
-    expect(text).toContain('🏆 Top holder: 21%');
+    expect(text).toContain('🏆 Top 10 holders: 21%');
     expect(text).toContain('🐦 X ✅ | TG ✅ | Web ❌');
     expect(text).toContain('<code>0xTOKEN000000000000000000000000000000001</code>');
     expect(text).not.toContain('📈 Now:'); // no live line unless c.live is present
+    expect(text).not.toContain('ATH'); // removed entirely — ATH data isn't available (Option-A)
+    expect(text).not.toContain('👥 Holders'); // removed entirely — holders count isn't available
+    expect(text).not.toContain('not measured');
+  });
+
+  it('hides the Trust line when gtScore is absent', () => {
+    const text = formatCard({ ...CARD, gtScore: undefined });
+    expect(text).not.toContain('Trust');
+  });
+
+  it('hides the Top 10 holders line when security.topHolderPct is unknown/absent', () => {
+    const unknown = formatCard({ ...CARD, security: { ...CARD.security!, topHolderPct: 'unknown' } });
+    expect(unknown).not.toContain('Top 10 holders');
+
+    const noSecurity = formatCard({ ...CARD, security: undefined });
+    expect(noSecurity).not.toContain('Top 10 holders');
   });
 
   it('renders the live Now line only when c.live is present', () => {
@@ -101,8 +117,7 @@ describe('formatCard', () => {
 
   it('abbreviates large USD values with M/B suffixes', () => {
     const big = formatCard({ ...CARD, fdvUsd: 156176100, liquidityUsd: 10527600 });
-    expect(big).toContain('💰 MC: $156.2M');
-    expect(big).toContain('💧 Liq: $10.5M');
+    expect(big).toContain('💰 MC: $156.2M · 💧 Liq: $10.5M');
     const huge = formatCard({ ...CARD, fdvUsd: 2_400_000_000 });
     expect(huge).toContain('💰 MC: $2.4B');
   });
@@ -134,13 +149,13 @@ describe('formatCard', () => {
     expect(noSecurity).toContain('🛡 Security: ❓');
   });
 
-  it('renders unknown/absent security sub-fields as ?, with honeypot/tax always "not measured"', () => {
+  it('renders unknown/absent security sub-fields as ?, with honeypot always "n/a", and hides the Top 10 line', () => {
     const text = formatCard({
       ...CARD,
       security: { sellTaxPct: 'unknown', topHolderPct: 'unknown', riskLevel: 'warn' },
     });
-    expect(text).toContain('🛡 Security: ⚠️  renounced ? · LP ? · verified ? · transfers ? · honeypot/tax: not measured');
-    expect(text).toContain('🏆 Top holder: ?');
+    expect(text).toContain('🛡 Security: ⚠️  renounced ? · LP ? · verified ? · transfers ? · honeypot n/a');
+    expect(text).not.toContain('Top 10 holders');
   });
 
   it('renders LP/verified/transfers as ❌ (not the old ⚠️) when explicitly false', () => {
@@ -155,19 +170,19 @@ describe('formatCard', () => {
         riskLevel: 'danger',
       },
     });
-    expect(text).toContain('🛡 Security: 🧨  renounced ❌ · LP ❌ · verified ❌ · transfers ❌ · honeypot/tax: not measured');
+    expect(text).toContain('🛡 Security: 🧨  renounced ❌ · LP ❌ · verified ❌ · transfers ❌ · honeypot n/a');
   });
 
-  it('renders unknown/absent display fields as ? (MC, ATH, Liq, Vol, Holders)', () => {
+  it('renders unknown/absent display fields as ? (MC, Liq, Vol) and never shows ATH/Holders', () => {
     const text = formatCard({
       ...CARD,
       fdvUsd: 'unknown', athUsd: 'unknown', liquidityUsd: 'unknown',
       volume1hUsd: 'unknown', holders: 'unknown',
     });
-    expect(text).toContain('💰 MC: ? • ⇡ ATH ?');
-    expect(text).toContain('💧 Liq: ?');
+    expect(text).toContain('💰 MC: ? · 💧 Liq: ?');
     expect(text).toContain('📊 Vol 1h: ?');
-    expect(text).toContain('👥 Holders: ?');
+    expect(text).not.toContain('ATH');
+    expect(text).not.toContain('Holders');
   });
 
   it('omits the fake-volume segment when fakeVolumePct is unknown or absent, shows it when known', () => {

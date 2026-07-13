@@ -1,6 +1,7 @@
 import type { AppConfig, PoolActivity, Security, TokenCard } from '../types';
 import { trends, Tracker, type FollowEvent } from './trending';
 import { enrich as defaultEnrich, type EnrichDeps } from './enrich';
+import type { GeckoTokenInfo } from '../sources/geckoterminal';
 import { formatCard, buildButtons, formatFollowUp, type FollowUpData, type Keyboard } from '../telegram';
 import type { Db } from '../db/index';
 import { log } from '../logger';
@@ -11,9 +12,10 @@ export interface GeckoLike {
   newPools(): Promise<PoolActivity[]>;
 }
 
-/** The one `Telegram` method runCycle needs. */
+/** The one `Telegram` method runCycle needs (photoUrl optional — a card without an image just
+ * sends as plain text; Telegram.send already falls back to text if the image can't be fetched). */
 export interface TelegramLike {
-  send(payload: string | { text: string; buttons?: Keyboard }): Promise<{ ok: boolean; messageId?: number }>;
+  send(payload: string | { text: string; photoUrl?: string; buttons?: Keyboard }): Promise<{ ok: boolean; messageId?: number }>;
 }
 
 export interface RunCycleDeps {
@@ -23,10 +25,15 @@ export interface RunCycleDeps {
   telegram: TelegramLike;
   /** Live on-chain + Blockscout security scan, already bound to `evm`/`cfg.security` by the caller. */
   securityScan: (tokenAddress: string, poolAddress: string) => Promise<Security | 'unknown'>;
+  /** GeckoTerminal token-info lookup (socials, logo, trust score, top-10 concentration), already
+   * bound to a `GeckoTerminal` instance by the caller. Optional — a caller without a source for
+   * it simply gets a card with those fields absent (enrich degrades this the same way it does
+   * securityScan failures). */
+  tokenInfo?: (address: string) => Promise<GeckoTokenInfo>;
   cfg: AppConfig;
   dry: boolean;
   /** Defaults to the real `enrich` from ./enrich; injectable so tests can bypass securityScan wiring entirely. */
-  enrich?: (activity: PoolActivity, deps: EnrichDeps) => Promise<TokenCard>;
+  enrich?: (activity: PoolActivity, deps: EnrichDeps, securityCfg: AppConfig['security']) => Promise<TokenCard>;
 }
 
 /**
@@ -135,11 +142,11 @@ async function postFollowUp(deps: RunCycleDeps, data: FollowUpData): Promise<voi
 
 async function postNewTrend(
   deps: RunCycleDeps,
-  enrichImpl: (activity: PoolActivity, deps: EnrichDeps) => Promise<TokenCard>,
+  enrichImpl: (activity: PoolActivity, deps: EnrichDeps, securityCfg: AppConfig['security']) => Promise<TokenCard>,
   p: PoolActivity,
   now: number,
 ): Promise<void> {
-  const card = await enrichImpl(p, { securityScan: deps.securityScan });
+  const card = await enrichImpl(p, { securityScan: deps.securityScan, tokenInfo: deps.tokenInfo }, deps.cfg.security);
   const body = formatCard(card);
   const buttons = buildButtons(card, deps.cfg.buttons);
 
@@ -147,8 +154,9 @@ async function postNewTrend(
   let ok = true;
   if (deps.dry) {
     log('info', '[DRY] would post:\n' + body);
+    if (card.imageUrl) log('info', `[DRY] image: ${card.imageUrl}`);
   } else {
-    const r = await deps.telegram.send({ text: body, buttons });
+    const r = await deps.telegram.send({ text: body, photoUrl: card.imageUrl, buttons });
     if (!r.ok) {
       log('warn', `runCycle: telegram send failed for ${p.symbol} (${p.address})`);
       ok = false;

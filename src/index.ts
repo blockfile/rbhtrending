@@ -50,6 +50,7 @@ const deps: RunCycleDeps = {
   tracker,
   telegram,
   securityScan: securityScanDep,
+  tokenInfo: (a) => gecko.tokenInfo(a),
   cfg,
   dry,
 };

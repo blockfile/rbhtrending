@@ -52,6 +52,9 @@ export interface TokenCard {
   twitter?: string;
   telegram?: string;
   website?: string;
+  /** GeckoTerminal token-info logo, and its 0-100 trust rating (Task 12). */
+  imageUrl?: string;
+  gtScore?: number;
   /** Present only while a live-edit ticker is driving this card (see followUp.liveEditSec). */
   live?: { nowUsd: number; multiple: number };
 }

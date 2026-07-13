@@ -384,3 +384,90 @@ describe('GeckoTerminal', () => {
     expect(result[0]?.symbol).toBe('RETRY');
   });
 });
+
+describe('GeckoTerminal.tokenInfo', () => {
+  // Fixture shaped exactly like the live-verified /tokens/{addr}/info response (see
+  // task-12-brief.md's "Verified GeckoTerminal fields" probe results).
+  const infoFixture = {
+    data: {
+      attributes: {
+        image_url: 'https://assets.geckoterminal.com/logo.png',
+        websites: ['https://vex.fun'],
+        twitter_handle: '@vexcoin',
+        telegram_handle: 'vexcoin_tg',
+        gt_score: 72.4,
+        holders: {
+          count: null,
+          distribution_percentage: { top_10: '18.1768' },
+        },
+        developer_holding_percentage: null,
+        is_honeypot: 'unknown',
+      },
+    },
+  };
+
+  it('maps the verified info fields (image, socials, gt_score rounded, top-10 parsed)', async () => {
+    let calls = 0;
+    const addr = '0xInfoTokenAAAA1111111111111111111111111';
+    const mockFetch = async (url: string) => {
+      calls++;
+      expect(url).toContain(`/tokens/${addr}/info`);
+      return new Response(JSON.stringify(infoFixture), { status: 200 });
+    };
+    const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+    const info = await client.tokenInfo(addr);
+    expect(info).toEqual({
+      imageUrl: 'https://assets.geckoterminal.com/logo.png',
+      twitter: 'https://x.com/vexcoin',
+      telegram: 'https://t.me/vexcoin_tg',
+      website: 'https://vex.fun',
+      gtScore: 72,
+      topHolderPct: 18.1768,
+    });
+    expect(calls).toBe(1);
+  });
+
+  it('caches per address for the TTL — a second call within the window does not re-fetch', async () => {
+    let calls = 0;
+    const addr = '0xCacheHitTokenBBBB2222222222222222222222';
+    const mockFetch = async () => {
+      calls++;
+      return new Response(JSON.stringify(infoFixture), { status: 200 });
+    };
+    const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+    const first = await client.tokenInfo(addr);
+    const second = await client.tokenInfo(addr);
+    expect(calls).toBe(1);
+    expect(second).toEqual(first);
+  });
+
+  it('returns {} without throwing on a non-ok response (e.g. 500)', async () => {
+    const addr = '0x500TokenCCCC3333333333333333333333333333';
+    const mockFetch = async () => new Response('server error', { status: 500 });
+    const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+    await expect(client.tokenInfo(addr)).resolves.toEqual({});
+  });
+
+  it('returns {} without throwing when fetch itself rejects', async () => {
+    const addr = '0xThrowTokenDDDD4444444444444444444444444';
+    const mockFetch = async () => {
+      throw new Error('network down');
+    };
+    const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+    await expect(client.tokenInfo(addr)).resolves.toEqual({});
+  });
+
+  it('omits empty/missing fields instead of mapping them to falsy placeholders', async () => {
+    const addr = '0xPartialTokenEEEE5555555555555555555555';
+    const mockFetch = async () =>
+      new Response(
+        JSON.stringify({
+          data: { attributes: { image_url: '', websites: [], gt_score: null, holders: {} } },
+        }),
+        { status: 200 },
+      );
+    const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+    const info = await client.tokenInfo(addr);
+    expect(info).toEqual({});
+  });
+});

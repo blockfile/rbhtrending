@@ -56,22 +56,6 @@ function usdOrQ(v: number | 'unknown' | undefined): string {
   return `$${v.toFixed(0)}`;
 }
 
-/** Percentage without a trailing '%' (for combining two into "a/b%"); '?' when unknown/absent. */
-function pctNumOrQ(v: number | 'unknown' | undefined): string {
-  if (v === undefined || v === 'unknown') return '?';
-  return v.toFixed(0);
-}
-
-function pctOrQ(v: number | 'unknown' | undefined): string {
-  const n = pctNumOrQ(v);
-  return n === '?' ? '?' : `${n}%`;
-}
-
-function numOrQ(v: number | 'unknown' | undefined): string {
-  if (v === undefined || v === 'unknown') return '?';
-  return String(v);
-}
-
 function boolMark(v: boolean | 'unknown' | undefined, whenTrue: string, whenFalse: string): string {
   if (v === undefined || v === 'unknown') return '?';
   return v ? whenTrue : whenFalse;
@@ -91,8 +75,9 @@ const SECURITY_EMOJI: Record<'safe' | 'warn' | 'danger' | 'unknown', string> = {
 
 /**
  * Render a TokenCard as the Telegram HTML card body. Any field that is `'unknown'` or absent
- * renders as `?` (or, for the fake-volume segment, is omitted entirely) — it never upgrades
- * the displayed security verdict toward "safe".
+ * renders as `?` (or, for the fake-volume segment, is omitted entirely); genuinely
+ * unavailable fields (Trust, Top 10 holders) are HIDDEN entirely rather than printing a `?` —
+ * a missing sub-check never upgrades the displayed security verdict toward "safe".
  */
 export function formatCard(c: TokenCard): string {
   const s = c.security;
@@ -101,8 +86,8 @@ export function formatCard(c: TokenCard): string {
   const securityBadge = SECURITY_EMOJI[risk];
 
   // v1 Option-A field set: no honeypot/tax simulation on this chain (no standard router) —
-  // the badge instead reports renounce/LP/verified/transferability, and honeypot/tax are
-  // always labeled "not measured" rather than rendering a stale/fake ✅.
+  // the badge instead reports renounce/LP/verified/transferability, and honeypot is always
+  // labeled "n/a" (honest: it's not measured) rather than rendering a stale/fake ✅.
   const renounced = boolMark(s?.ownerRenounced, '✅', '❌');
   const lp = boolMark(s?.lpBurnedOrLocked, '🔒', '❌');
   const verified = boolMark(s?.verified, '✅', '❌');
@@ -110,21 +95,29 @@ export function formatCard(c: TokenCard): string {
 
   const lines = [
     `${grade} <b>$${escapeHtml(c.symbol)}</b> • ${escapeHtml(c.name)}`,
-    `🛡 Security: ${securityBadge}  renounced ${renounced} · LP ${lp} · verified ${verified} · transfers ${transfers} · honeypot/tax: not measured`,
+    `🛡 Security: ${securityBadge}  renounced ${renounced} · LP ${lp} · verified ${verified} · transfers ${transfers} · honeypot n/a`,
   ];
+
+  if (typeof c.gtScore === 'number') {
+    lines.push(`🏅 Trust: ${c.gtScore}/100 (GeckoTerminal)`);
+  }
   if (c.live) lines.push(`📈 Now: ${usdOrQ(c.live.nowUsd)} • ${c.live.multiple.toFixed(1)}X`);
 
+  lines.push(`💰 MC: ${usdOrQ(c.fdvUsd)} · 💧 Liq: ${usdOrQ(c.liquidityUsd)}`);
+
   const fake = c.fakeVolumePct;
-  const volLine = fake !== undefined && fake !== 'unknown'
-    ? `📊 Vol 1h: ${usdOrQ(c.volume1hUsd)} • 🪙 fake ~${fake.toFixed(0)}%`
-    : `📊 Vol 1h: ${usdOrQ(c.volume1hUsd)}`;
+  lines.push(
+    fake !== undefined && fake !== 'unknown'
+      ? `📊 Vol 1h: ${usdOrQ(c.volume1hUsd)} • 🪙 fake ~${fake.toFixed(0)}%`
+      : `📊 Vol 1h: ${usdOrQ(c.volume1hUsd)}`,
+  );
+
+  const topHolderPct = s?.topHolderPct;
+  if (typeof topHolderPct === 'number') {
+    lines.push(`🏆 Top 10 holders: ${topHolderPct.toFixed(0)}%`);
+  }
 
   lines.push(
-    `💰 MC: ${usdOrQ(c.fdvUsd)} • ⇡ ATH ${usdOrQ(c.athUsd)}`,
-    `💧 Liq: ${usdOrQ(c.liquidityUsd)}`,
-    volLine,
-    `👥 Holders: ${numOrQ(c.holders)}`,
-    `🏆 Top holder: ${pctOrQ(s?.topHolderPct)}`,
     `🐦 X ${mark(c.twitter)} | TG ${mark(c.telegram)} | Web ${mark(c.website)}`,
     '',
     `<code>${c.address}</code>`, // tap to copy — links are the buttons below
