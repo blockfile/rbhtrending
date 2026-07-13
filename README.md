@@ -1,8 +1,8 @@
 # Robinhood Chain Trending Bot
 
 A Telegram "trending" feed bot for **Robinhood Chain** (EVM L2, chain ID `4663`) memecoins. It's a
-high-coverage feed, not a strict filter: it posts tokens gaining traction as rich cards with an
-on-chain security badge, then follows up with "up Nx" and dump alerts as the token moves.
+high-coverage feed, not a strict filter: it posts tokens gaining traction as rich cards with a
+security badge and red-flag list, then follows up with "up Nx" and dump alerts as the token moves.
 
 This is a **separate project** from the Solana pump.fun scanner — different chain, different repo
 (`d:\robinhood-trending`) — but it reuses the Solana bot's Telegram card/presentation layer.
@@ -10,120 +10,147 @@ This is a **separate project** from the Solana pump.fun scanner — different ch
 ## How it works
 
 ```
-GeckoTerminal poll (trending + new pools, network 'robinhood')
-        │  discovery + market data: liquidity, 1h volume, buyers, FDV, price
+GMGN openapi market/rank poll (chain=robinhood, interval=1h, limit=100)
+        │  ONE call returns every field a card needs: price/MC/liq/vol, holder count,
+        │  top-10 %, ATH, honeypot, buy/sell tax, renounced, LP-lock %, verified,
+        │  dev-hold %, plus smart-money / KOL / sniper counts
         ▼
-   Trending gate (pipeline/trending.ts)
-        │  liquidityUsd ≥ floor AND (volume1hUsd ≥ floor OR buyers1h ≥ floor)
+   Trending gate (pipeline/trending.ts → passesGate)
+        │  liquidityUsd ≥ minLiquidityUsd AND (volumeUsd ≥ minVolume1hUsd OR buys ≥ minBuyers1h)
         ▼
-   On-chain enrichment (checks/security.ts, checks/blockscout.ts)
-        │  security scan via EVM RPC (eth_call) + Blockscout verification
+   Scoring (checks/assess.ts → assess)
+        │  score 0-100, grade safe/warn/danger, red-flag list — all derived from the GMGN row
         ▼
-   Telegram card (telegram.ts) → post
+   Telegram card (telegram.ts → formatCard) → post
         │
         ▼
    Tracker follow-ups (pipeline/trending.ts)
-        up-Nx milestone alerts + dump-drawdown alerts, driven by polled FDV reads
+        up-Nx milestone alerts + dump-drawdown alerts, driven by the same polled market-cap reads
 ```
 
+**GMGN is the only data source.** There is no GeckoTerminal call and no on-chain RPC/EVM scanning
+in the current bot — the earlier GeckoTerminal + `eth_call`-based security-scan design was fully
+replaced by a single GMGN `market/rank` poll per cycle.
+
 A single long-running Node process. State (seen/posted tokens, follow-up tracking) persists in
-SQLite via `better-sqlite3`. There's no live-caption editing or WS listener in v1 — see
-[Known limitations](#known-limitations--v11-roadmap).
+SQLite via `better-sqlite3`.
 
-## Security model (v1 "Option A")
+## Security badge & score
 
-Robinhood Chain has **no standard Uniswap router** exposing `getAmountsOut` / a swap function, so
-there's no sell-simulation to run a honeypot or buy/sell-tax check through. GoPlus and other
-third-party security APIs don't support chain 4663 either. So v1's `🛡 Security` badge is built
-entirely from on-chain checks we run ourselves via `eth_call`:
+`checks/assess.ts` grades every GMGN row into a `⭐` score (0-100), a `🛡` grade
+(`safe` / `warn` / `danger`), and a list of `⚠️` red flags — all computed locally from the fields
+GMGN already returned, no extra calls.
 
-| Signal | How it's checked |
+**Flags** (pushed in this order; the card joins them with " · "):
+
+| Flag | Rule |
 |---|---|
-| **Owner renounced** | `owner()` call — renounced if it resolves to the zero/dead address (or reverts, treated as renounced) |
-| **LP burned / locked** | LP-token (pair) balance held at burn addresses ≥ ~99% of total supply |
-| **Contract verified** | Blockscout (`robinhoodchain.blockscout.com`) verified-source lookup |
-| **Transferability** | Self-transfer simulation: impersonates a real recent holder and `eth_call`s a transfer of half their balance to the dead address — a revert is a hard "this token can't be moved" signal, substituting for a real honeypot check |
+| `honeypot` | `is_honeypot` true |
+| `sell tax N%` | sell tax > 10% |
+| `LP not locked` | LP-lock % < 50% |
+| `owner active` | not renounced |
+| `unverified` | contract not open-source/verified |
+| `top 10 owns N%` | top-10 holder share > 50% |
+| `dev holds N%` | dev/team hold % > 15% |
+| `wash trading` | GMGN's own wash-trading flag |
 
-**Honeypot detection and buy/sell tax are NOT measured in v1** — they're always shown as
-"not measured" rather than a stale or fake ✅. A real sell-tax simulator is planned for v1.1 (see
-below).
+**Grade:** `danger` if honeypot OR sell tax > 30% OR LP-lock < 20%; else `warn` if any flag fired;
+else `safe` (no flags at all).
 
-**Coverage model:** every field that can't be determined renders as `?`, and an unknown field
-*never* upgrades the badge toward "safe" — `transferable` and `lpBurnedOrLocked` are the two
-critical checks; either being unknown caps the verdict at `warn`.
+**Score:** starts at 100 and is docked per signal — honeypot −80, not renounced −12, unverified −8,
+LP-lock < 20% −30 (else < 50% −15), sell tax > 30% −30 (else > 10% −15), top-10 > 70% −25 (else >
+50% −12), dev hold > 15% −12, wash trading −20, rug-ratio > 50% −20 — with small bonuses for depth
+(smart-money count ≥ 10 → +5, KOL count ≥ 10 → +5), then clamped to `0..100`.
+
+**Coverage model:** the trending gate is about activity (liquidity/volume/buyers), not safety —
+a flagged token still posts, with its warnings visible on the card. Nothing is silently hidden.
+
+## Startup behavior
+
+- **Cold-start silent seed** (`pipeline/runCycle.ts`): on the very first run ever (`db.postCount()
+  === 0`), every currently gate-passing token is silently marked as posted — no scoring, no
+  formatting, no Telegram send — so the ~dozens of tokens already trending at boot don't flood the
+  channel. From then on, only tokens that *newly* start trending are alerted.
+- **Per-cycle post cap**: `trending.maxPostsPerCycle` (config.json) caps how many brand-new posts
+  go out in a single poll cycle. Anything over the cap is simply picked up on a later cycle — it's
+  still gate-passing and unposted, so nothing is lost, just throttled.
+- **Trending gate** (`passesGate` in `pipeline/trending.ts`):
+  `liquidityUsd ≥ trending.minLiquidityUsd AND (volumeUsd ≥ trending.minVolume1hUsd OR buys ≥
+  trending.minBuyers1h)`.
+- Tracked (already-posted) tokens skip the gate/cap entirely and are always fed a fresh
+  market-cap read each cycle for milestone/dump follow-ups.
 
 ## Requirements
 
 - Node.js ≥ 20
-- An EVM RPC endpoint (HTTP + WS) for Robinhood Chain, chain ID `4663` (e.g. QuickNode, Alchemy)
+- A GMGN API key
 - A Telegram bot token and a chat ID to post to
 
-Runtime dependencies are intentionally minimal — `ws`, `better-sqlite3`, `dotenv`. There's no
-web3/ethers dependency; the few EVM calls this bot needs (`eth_call`, ABI encode/decode) are
-hand-rolled in `src/chain/`.
+Runtime dependencies (`package.json`): `better-sqlite3` (state), `dotenv` (env loading). `ws` is
+also listed as a dependency but isn't imported anywhere under `src/` — it appears to be an unused
+leftover from before the on-chain WS listener was removed; don't read it as a live feature.
 
 ## Setup
 
-1. Install dependencies:
+1. **Get a GMGN API key:**
    ```
-   npm install
+   npx gmgn-cli config
    ```
-2. Copy `.env.example` to `.env` and fill in real values:
+   generates a keypair and a creation link — open the link, then apply the issued key:
+   ```
+   npx gmgn-cli config --apply <key>
+   ```
+   The bot reads this from `GMGN_API_KEY` in `.env`.
+
+2. **Copy `.env.example` to `.env`** and fill in real values:
 
    | Variable | Required | Notes |
    |---|---|---|
-   | `RH_RPC_URL` | yes | HTTP RPC endpoint for Robinhood Chain |
-   | `RH_WS_URL` | yes | WS RPC endpoint for Robinhood Chain |
+   | `GMGN_API_KEY` | yes | from `gmgn-cli` above |
    | `TELEGRAM_BOT_TOKEN` | yes | from BotFather |
    | `TELEGRAM_CHAT_ID` | yes | destination chat/channel; **for a channel this must be negative**, e.g. `-1004389601664` |
-   | `GECKOTERMINAL_API_KEY` | no | optional, raises GeckoTerminal's free rate limit |
+   | `RH_RPC_URL` / `RH_WS_URL` | no | legacy — the on-chain EVM client that used these was removed when GMGN took over; the bot boots fine without them |
+   | `GECKOTERMINAL_API_KEY` | no | legacy — left over from the pre-GMGN GeckoTerminal source; unused |
 
-3. Review `config.json` thresholds (all live values, no code changes needed to tune them):
+3. **Review `config.json` thresholds** (all live values, no code changes needed to tune them):
 
    | Field | Meaning |
    |---|---|
    | `trending.minLiquidityUsd` | floor pool liquidity (USD) to be eligible to trend |
-   | `trending.minVolume1hUsd` | 1h volume floor (either this or buyers1h must clear) |
-   | `trending.minBuyers1h` | 1h unique-buyer floor (either this or volume1h must clear) |
-   | `trending.pollSeconds` | how often the bot polls GeckoTerminal |
-   | `trending.dumpDrawdownPct` | drawdown off peak FDV that fires a dump follow-up |
+   | `trending.minVolume1hUsd` | 1h volume floor (either this or `minBuyers1h` must clear) |
+   | `trending.minBuyers1h` | 1h buyer-count floor (either this or `minVolume1hUsd` must clear) |
+   | `trending.pollSeconds` | how often the bot polls GMGN |
    | `trending.milestones` | multiples (e.g. `2,5,10,25,50,100`) that fire "up Nx" follow-ups |
-   | `security.sellTaxDangerPct` / `sellTaxWarnPct` | reserved thresholds for the v1.1 tax simulator |
-   | `security.topHolderWarnPct` | top-holder % above which the badge escalates to `warn` |
-   | `followUp.windowMinutes` | how long a posted token stays tracked for follow-ups |
-   | `followUp.liveEditSec` | reserved cadence for the (not-yet-wired) live-edit ticker |
+   | `trending.dumpDrawdownPct` | drawdown off peak market cap that fires a dump follow-up |
+   | `trending.maxPostsPerCycle` | cap on brand-new posts sent in one poll cycle |
+   | `followUp.windowMinutes` | how long a posted token stays tracked for follow-ups before its tracking window expires |
+   | `followUp.liveEditSec` | reserved cadence for the (not-yet-wired) live-edit ticker — see Roadmap |
    | `buttons.chart` / `scan` / `trade` | toggle each inline button on the card |
 
 ## Running
 
 ```
-npx tsx src/index.ts --dry   # dry run — logs cards to stdout, sends nothing to Telegram
-npx tsx src/index.ts         # live — posts to the configured Telegram chat
+npm install
+npm run dry     # dry run — logs cards (and cold-start seed summary) to stdout, sends nothing to Telegram
+npm start        # live — posts to the configured Telegram chat
 ```
-
-`npm run dry` and `npm start` are shortcuts for the same two commands.
 
 Tests and typecheck:
 
 ```
-npx vitest run
-npm run typecheck
+npm test              # vitest run
+npm run typecheck     # tsc --noEmit
 ```
 
 For production, run it under **pm2** (or an equivalent process manager) as a single long-running
 process — there's nothing to scale horizontally; SQLite state assumes one writer.
 
-## Known limitations / v1.1 roadmap
+## Roadmap / notes
 
-- **Verified badge depends on Blockscout** (`robinhoodchain.blockscout.com`), which may throttle
-  some IPs — on a throttled/failed lookup the badge degrades to `?`, it does not guess.
-- **LP-lock detection only recognizes burn-to-dead-address.** LP sent to a third-party locker
-  contract is not detected and shows `?`, not "locked".
-- **Holders, ATH, and social links (X/Telegram/website) are not yet enriched** — the card fields
-  exist but no pipeline stage populates them yet.
-- **No live-caption editing and no WS pair-listener in v1** — discovery is poll-only via
-  GeckoTerminal; the original posted card is static (follow-ups are separate messages, not edits
-  to the original).
-- **Paid "Sponsored" placement is v2** — out of scope for this bot as it stands.
-- **A full honeypot/buy-sell-tax simulator is planned for v1.1.** `eth_call` state overrides are
-  confirmed supported on this chain's RPC, which is what a real simulator would need.
+- **Live-card editing is not wired up in v1.** `Telegram.editCaption()` exists and `config.json`
+  reserves `followUp.liveEditSec` for it, but `runCycle` only ever sends the original card plus
+  separate follow-up messages — the original card is never edited in place.
+- **Paid "Sponsored" placement is v2.** The `posts` table already has a `sponsored` column
+  (defaults to `0`), but no submission/payment flow or "⭐ Sponsored" card variant ships yet.
+- This bot is entirely separate from the Solana pump.fun scanner in this account's other repo —
+  different chain, different data source, independent process.
