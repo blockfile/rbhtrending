@@ -99,6 +99,14 @@ describe('formatCard', () => {
     expect(formatCard(CARD)).not.toContain('📈 Now:');
   });
 
+  it('abbreviates large USD values with M/B suffixes', () => {
+    const big = formatCard({ ...CARD, fdvUsd: 156176100, liquidityUsd: 10527600 });
+    expect(big).toContain('💰 MC: $156.2M');
+    expect(big).toContain('💧 Liq: $10.5M');
+    const huge = formatCard({ ...CARD, fdvUsd: 2_400_000_000 });
+    expect(huge).toContain('💰 MC: $2.4B');
+  });
+
   it('picks the grade emoji and security badge from the four risk tiers', () => {
     const safe = formatCard({ ...CARD, security: { ...CARD.security!, riskLevel: 'safe' } });
     expect(safe.startsWith('🔥')).toBe(true);

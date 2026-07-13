@@ -47,7 +47,11 @@ export function buildButtons(
 
 function usdOrQ(v: number | 'unknown' | undefined): string {
   if (v === undefined || v === 'unknown') return '?';
-  return v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${v.toFixed(0)}`;
+  const abs = Math.abs(v);
+  if (abs >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
+  if (abs >= 1e3) return `$${(v / 1e3).toFixed(1)}k`;
+  return `$${v.toFixed(0)}`;
 }
 
 /** Percentage without a trailing '%' (for combining two into "a/b%"); '?' when unknown/absent. */
