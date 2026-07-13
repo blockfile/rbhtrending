@@ -158,6 +158,36 @@ describe('parsePool', () => {
     expect(result?.fdvUsd).toBe(0);
     expect(result?.priceUsd).toBe(0);
   });
+
+  it('h1-null-falls-back-to-h24: volume with h1:null falls back to h24', () => {
+    const poolWithNullH1 = {
+      ...validRawPool,
+      attributes: {
+        ...validRawPool.attributes,
+        volume_usd: {
+          h1: null,
+          h24: '999',
+        },
+      },
+    };
+    const result = parsePool(poolWithNullH1);
+    expect(result?.volume1hUsd).toBe(999);
+  });
+
+  it('createdAt NaN: garbage pool_created_at returns 0 for createdAt', () => {
+    const poolWithGarbageDate = {
+      ...validRawPool,
+      attributes: {
+        ...validRawPool.attributes,
+        pool_created_at: 'not-a-valid-date-xyz',
+      },
+    };
+    const result = parsePool(poolWithGarbageDate);
+    expect(result).not.toBeNull();
+    expect(result?.createdAt).toBe(0);
+    expect(result?.symbol).toBe('VEX');
+    expect(result?.liquidityUsd).toBe(125000.50);
+  });
 });
 
 describe('GeckoTerminal', () => {
@@ -309,5 +339,48 @@ describe('GeckoTerminal', () => {
     const result = await client.trendingPools();
     expect(result.length).toBe(1);
     expect(result[0]?.symbol).toBe('VALID');
+  });
+
+  it('retry-after-thrown-error: fetchFn that throws on call 1 retries and succeeds on call 2', async () => {
+    let callCount = 0;
+    const mockFetch = async (url: string, opts?: RequestInit) => {
+      callCount++;
+      if (callCount === 1) {
+        throw new Error('Network error on first attempt');
+      }
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'robinhood_0x789',
+              type: 'pool',
+              attributes: {
+                address: '0xPoolAddr3',
+                name: 'RETRY / VIRTUAL',
+                pool_created_at: '2024-01-17T12:00:00Z',
+                reserve_in_usd: '75000',
+                fdv_usd: '750000',
+                base_token_price_usd: '0.005',
+                volume_usd: { h1: '20000' },
+                transactions: { h1: { buyers: 35 } },
+              },
+              relationships: {
+                base_token: {
+                  data: { id: 'robinhood_0xRETRY' },
+                },
+              },
+            },
+          ],
+        }),
+        { status: 200 }
+      );
+    };
+
+    const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+    const result = await client.trendingPools();
+    expect(callCount).toBe(2);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result.length).toBe(1);
+    expect(result[0]?.symbol).toBe('RETRY');
   });
 });

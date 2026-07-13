@@ -53,10 +53,12 @@ export function parsePool(raw: any): PoolActivity | null {
     // Handle volume (prefer h1, fall back to h24)
     let volume1hUsd = 0;
     if (attrs.volume_usd) {
-      if (attrs.volume_usd.h1 !== undefined) {
-        volume1hUsd = parseFloat(attrs.volume_usd.h1) || 0;
-      } else if (attrs.volume_usd.h24 !== undefined) {
-        volume1hUsd = parseFloat(attrs.volume_usd.h24) || 0;
+      const h1 = parseFloat(attrs.volume_usd.h1);
+      const h24 = parseFloat(attrs.volume_usd.h24);
+      if (Number.isFinite(h1)) {
+        volume1hUsd = h1;
+      } else if (Number.isFinite(h24)) {
+        volume1hUsd = h24;
       }
     }
 
@@ -67,7 +69,8 @@ export function parsePool(raw: any): PoolActivity | null {
     }
 
     // Convert pool_created_at to unix timestamp
-    const createdAt = new Date(attrs.pool_created_at).getTime();
+    const ts = new Date(attrs.pool_created_at).getTime();
+    const createdAt = Number.isNaN(ts) ? 0 : ts;
 
     return {
       address,
@@ -123,32 +126,40 @@ export class GeckoTerminal {
       headers['Authorization'] = this.apiKey;
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    let lastError: Error | null = null;
 
-    try {
-      // Enforce rate limit
-      await rateLimit();
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
 
-      // First attempt
-      let response = await this.fetchFn(url, {
-        headers,
-        signal: controller.signal,
-      });
-
-      // Retry once on failure
-      if (!response.ok) {
+      try {
+        // Enforce rate limit
         await rateLimit();
-        response = await this.fetchFn(url, {
+
+        const response = await this.fetchFn(url, {
           headers,
           signal: controller.signal,
         });
-      }
 
-      return response;
-    } finally {
-      clearTimeout(timeout);
+        // Return on success or after final attempt
+        if (response.ok || attempt === 2) {
+          return response;
+        }
+        // If !response.ok and not final attempt, retry
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (attempt === 2) {
+          // Final attempt threw, rethrow
+          throw lastError;
+        }
+        // Otherwise, retry on next iteration
+      } finally {
+        clearTimeout(timeout);
+      }
     }
+
+    // Should not reach here
+    throw lastError || new Error('Fetch failed after retries');
   }
 
   async trendingPools(): Promise<PoolActivity[]> {
