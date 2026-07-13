@@ -25,6 +25,10 @@ export interface Security {
   // Blockscout verified-source flag (Task 6's securityScan). Same degrade rule as the rest of
   // this block: absent/'unknown' never upgrades the displayed verdict toward "safe".
   verified?: boolean | 'unknown';
+  // v1 Option-A transferability probe (Task 6c): impersonates a real holder and eth_calls a
+  // self-transfer — a revert is a hard "can't move the token" signal. Substitutes for the
+  // honeypot/tax simulation this chain can't run (no standard router). Same degrade rule.
+  transferable?: boolean | 'unknown';
 }
 
 export interface TokenCard {

@@ -1,6 +1,6 @@
 import type { Security, SecurityConfig } from '../types';
-import { SELECTORS, padAddress, encodeCall, decodeAddress, decodeUint } from '../chain/abi';
-import { DEAD_ADDRESSES } from '../chain/constants';
+import { SELECTORS, padAddress, encodeCall, encodeUint, decodeAddress, decodeUint } from '../chain/abi';
+import { DEAD_ADDRESSES, DEAD_ADDRESS } from '../chain/constants';
 
 /** Minimum burned-or-locked fraction (dead-address balance / total supply) to call LP burned. */
 const LP_BURN_BAR_NUM = 99n; // ratio >= 99/100, computed in integer math to avoid float drift
@@ -19,31 +19,37 @@ export interface SecurityFields {
   ownerRenounced: boolean | 'unknown';
   lpBurnedOrLocked: boolean | 'unknown';
   verified: boolean | 'unknown';
+  transferable: boolean | 'unknown';
   topHolderPct: number | 'unknown';
 }
 
 /**
- * Grades a set of security fields into a single verdict. Pure — no I/O. Two fields
- * (honeypot, lpBurnedOrLocked) are "critical": they gate existential risks (can't sell at
- * all / LP can be pulled), so an 'unknown' on either caps the verdict at 'warn'. The
- * softer signals (tax amount, renounce status, holder concentration) only escalate to
- * 'warn' when they're actually known to be bad — their absence alone doesn't block 'safe',
- * because topHolderPct in particular is *always* 'unknown' out of this module (holders come
- * from a GeckoTerminal enrichment stage elsewhere) and a 'safe' tier that can never fire
- * would be useless.
+ * Grades a set of security fields into a single verdict. Pure — no I/O.
+ *
+ * v1 Option-A: this chain has no standard router, so there is no sell simulation — honeypot,
+ * buyTaxPct, and sellTaxPct are permanently 'unknown' out of `securityScan` and are NOT scored
+ * here at all (deferred to v1.1). Their place is taken by `transferable`, a self-transfer probe
+ * against a real holder: a revert is a hard "this token can't be moved" signal.
+ *
+ * Two fields are "critical" — they gate existential risks (can't move the token at all / LP can
+ * be pulled) — so an 'unknown' on either caps the verdict at 'warn': `transferable` and
+ * `lpBurnedOrLocked`. `ownerRenounced` and `verified` are softer signals that only escalate to
+ * 'warn' when they're explicitly known-bad (`=== false`); their own 'unknown' is neutral and
+ * does NOT warn, to avoid over-warning on ordinary RPC/Blockscout flakiness. `topHolderPct`
+ * only escalates when it's a known number above the configured bar.
  */
 export function scoreSecurity(s: SecurityFields, cfg: SecurityConfig): 'safe' | 'warn' | 'danger' | 'unknown' {
-  if (s.honeypot === true) return 'danger';
-  if (typeof s.sellTaxPct === 'number' && s.sellTaxPct > cfg.sellTaxDangerPct) return 'danger';
-  if (s.lpBurnedOrLocked === false) return 'danger';
+  if (s.transferable === false || s.lpBurnedOrLocked === false) return 'danger';
 
-  const scored = [s.honeypot, s.sellTaxPct, s.ownerRenounced, s.lpBurnedOrLocked, s.topHolderPct];
-  if (scored.every((v) => v === 'unknown')) return 'unknown';
-
-  if (s.honeypot === 'unknown' || s.lpBurnedOrLocked === 'unknown') return 'warn';
-  if (typeof s.sellTaxPct === 'number' && s.sellTaxPct >= cfg.sellTaxWarnPct) return 'warn';
-  if (s.ownerRenounced === false) return 'warn';
-  if (typeof s.topHolderPct === 'number' && s.topHolderPct > cfg.topHolderWarnPct) return 'warn';
+  if (
+    s.transferable === 'unknown' ||
+    s.lpBurnedOrLocked === 'unknown' ||
+    s.ownerRenounced === false ||
+    s.verified === false ||
+    (typeof s.topHolderPct === 'number' && s.topHolderPct > cfg.topHolderWarnPct)
+  ) {
+    return 'warn';
+  }
 
   return 'safe';
 }
@@ -52,12 +58,16 @@ export function scoreSecurity(s: SecurityFields, cfg: SecurityConfig): 'safe' | 
 export interface SecurityDeps {
   call(to: string, data: string, from?: string): Promise<string>;
   isVerified(addr: string): Promise<boolean | 'unknown'>;
+  /** Recent Transfer-event `to` addresses for the token, newest-first (best-effort candidate
+   * list for the transferability probe). Real impl (eth_getLogs) lands in Task 10. */
+  recentHolders(token: string): Promise<string[]>;
 }
 
 /**
- * Best-effort on-chain security scan: owner-renounce, honeypot + sell-tax simulation,
- * LP-burned check, and Blockscout verification. Every sub-check degrades to 'unknown'
- * independently — this function itself never throws, no matter how badly the RPC behaves.
+ * Best-effort on-chain security scan: owner-renounce, honeypot + sell-tax simulation (always
+ * 'unknown' — see checkHoneypotAndTax), LP-burned check, Blockscout verification, and the v1
+ * Option-A transferability probe. Every sub-check degrades to 'unknown' independently — this
+ * function itself never throws, no matter how badly the RPC behaves.
  */
 export async function securityScan(
   deps: SecurityDeps,
@@ -65,11 +75,12 @@ export async function securityScan(
   poolAddr: string,
   cfg: SecurityConfig,
 ): Promise<Security> {
-  const [ownerRenounced, honeypotTax, lpBurnedOrLocked, verified] = await Promise.all([
+  const [ownerRenounced, honeypotTax, lpBurnedOrLocked, verified, transferable] = await Promise.all([
     checkOwnerRenounced(deps, tokenAddr),
     checkHoneypotAndTax(deps, tokenAddr, poolAddr),
     checkLpBurned(deps, poolAddr),
     checkVerified(deps, tokenAddr),
+    checkTransferable(deps, tokenAddr, poolAddr, cfg),
   ]);
 
   const fields: SecurityFields = {
@@ -79,6 +90,7 @@ export async function securityScan(
     ownerRenounced,
     lpBurnedOrLocked,
     verified,
+    transferable,
     topHolderPct: 'unknown', // supplied later by GeckoTerminal enrichment, not this module
   };
 
@@ -134,10 +146,55 @@ interface HoneypotTaxResult {
  * Robinhood Chain has NO standard router exposing getAmountsOut/swapExactTokensForTokens
  * (live-verified — see src/chain/constants.ts; the old ROUTER_ADDRESS constant this used to
  * call was wrong and has been deleted). Without a router there is no getAmountsOut round-trip
- * to verify and no swap call to simulate a sell through, so this always degrades to
- * 'unknown' rather than trusting a nonexistent contract. A real sell-simulation (reserve-math
- * quote + real-holder or state-override impersonation) is deferred to Task 6c.
+ * to verify and no swap call to simulate a sell through, so this always degrades to 'unknown'
+ * rather than trusting a nonexistent contract. FINAL v1 decision (Option-A, Task 6c): honeypot
+ * and buy/sell tax are permanently 'unknown' in v1 and no longer affect `scoreSecurity` at all
+ * — `checkTransferable` below is the v1 substitute existential-risk check. A real sell-tax
+ * simulation is deferred to v1.1.
  */
 async function checkHoneypotAndTax(_deps: SecurityDeps, _tokenAddr: string, _poolAddr: string): Promise<HoneypotTaxResult> {
   return { honeypot: 'unknown', sellTaxPct: 'unknown' };
+}
+
+/** Cap on how many candidate holders `checkTransferable` will probe before giving up. */
+const TRANSFERABLE_MAX_CANDIDATES = 5;
+
+/**
+ * v1 Option-A transferability probe (Task 6c): with no router to simulate a sell through,
+ * this impersonates a real recent holder and eth_calls a self-send of half their own balance
+ * to DEAD_ADDRESS. No allowance is needed — `h` already owns the tokens — so a revert here
+ * means the token can't be moved even by its own holder, a hard honeypot signal that doesn't
+ * depend on a router existing. Best-effort: degrades to 'unknown' whenever the candidate list
+ * is empty, every candidate has a zero balance, or anything unexpected goes wrong — it NEVER
+ * throws.
+ */
+async function checkTransferable(
+  deps: SecurityDeps,
+  tokenAddr: string,
+  poolAddr: string,
+  _cfg: SecurityConfig,
+): Promise<boolean | 'unknown'> {
+  try {
+    const skip = new Set([...DEAD_ADDRESSES, poolAddr.toLowerCase()]);
+    const holders = await deps.recentHolders(tokenAddr);
+    const candidates = holders.filter((h) => !skip.has(h.toLowerCase())).slice(0, TRANSFERABLE_MAX_CANDIDATES);
+
+    for (const h of candidates) {
+      const bal = decodeUint(await deps.call(tokenAddr, encodeCall(SELECTORS.balanceOf, padAddress(h))));
+      if (bal === 0n) continue;
+
+      const half = bal / 2n;
+      const amt = half === 0n ? bal : half;
+      const data = encodeCall(SELECTORS.transfer, padAddress(DEAD_ADDRESS), encodeUint(amt));
+      try {
+        await deps.call(tokenAddr, data, h);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }

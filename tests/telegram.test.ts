@@ -67,6 +67,8 @@ const CARD: TokenCard = {
     buyTaxPct: 2,
     lpBurnedOrLocked: true,
     ownerRenounced: true,
+    verified: true,
+    transferable: true,
   },
   athUsd: 240000,
   holders: 341,
@@ -80,7 +82,7 @@ describe('formatCard', () => {
   it('renders the full card with escaped name, security detail, market data, and tap-copy contract', () => {
     const text = formatCard(CARD);
     expect(text).toContain('🔥 <b>$HOOD</b> • Cool &lt;Token&gt;');
-    expect(text).toContain('🛡 Security: ✅  (honeypot ✅ · tax 2/2% · LP 🔒 · renounced ✅)');
+    expect(text).toContain('🛡 Security: ✅  renounced ✅ · LP 🔒 · verified ✅ · transfers ✅ · honeypot/tax: not measured');
     expect(text).toContain('💰 MC: $184.0k • ⇡ ATH $240.0k');
     expect(text).toContain('💧 Liq: $12.3k');
     expect(text).toContain('📊 Vol 1h: $27.6k • 🪙 fake ~12%');
@@ -97,37 +99,55 @@ describe('formatCard', () => {
     expect(formatCard(CARD)).not.toContain('📈 Now:');
   });
 
-  it('picks the grade emoji and security badge from the three risk tiers', () => {
+  it('picks the grade emoji and security badge from the four risk tiers', () => {
     const safe = formatCard({ ...CARD, security: { ...CARD.security!, riskLevel: 'safe' } });
     expect(safe.startsWith('🔥')).toBe(true);
     expect(safe).toContain('🛡 Security: ✅');
 
     const warn = formatCard({ ...CARD, security: { ...CARD.security!, riskLevel: 'warn' } });
     expect(warn.startsWith('⚠️')).toBe(true);
-    expect(warn).toContain('🛡 Security: ⚠️ ');
+    expect(warn).toContain('🛡 Security: ⚠️  renounced');
 
     const danger = formatCard({ ...CARD, security: { ...CARD.security!, riskLevel: 'danger' } });
     expect(danger.startsWith('🧨')).toBe(true);
     expect(danger).toContain('🛡 Security: 🧨');
+
+    const unknown = formatCard({ ...CARD, security: { ...CARD.security!, riskLevel: 'unknown' } });
+    expect(unknown).toContain('🛡 Security: ❓');
   });
 
-  it('treats an unknown/missing risk level as ⚠️? and never upgrades toward safe', () => {
+  it('treats an unknown/missing risk level as ❓ and never upgrades toward safe', () => {
     const unknownRisk = formatCard({ ...CARD, security: { ...CARD.security!, riskLevel: 'unknown' } });
     expect(unknownRisk.startsWith('⚠️')).toBe(true);
-    expect(unknownRisk).toContain('🛡 Security: ⚠️?');
+    expect(unknownRisk).toContain('🛡 Security: ❓');
 
     const noSecurity = formatCard({ ...CARD, security: undefined });
     expect(noSecurity.startsWith('⚠️')).toBe(true);
-    expect(noSecurity).toContain('🛡 Security: ⚠️?');
+    expect(noSecurity).toContain('🛡 Security: ❓');
   });
 
-  it('renders unknown/absent security sub-fields as ?', () => {
+  it('renders unknown/absent security sub-fields as ?, with honeypot/tax always "not measured"', () => {
     const text = formatCard({
       ...CARD,
       security: { sellTaxPct: 'unknown', topHolderPct: 'unknown', riskLevel: 'warn' },
     });
-    expect(text).toContain('(honeypot ? · tax ?/?% · LP ? · renounced ?)');
+    expect(text).toContain('🛡 Security: ⚠️  renounced ? · LP ? · verified ? · transfers ? · honeypot/tax: not measured');
     expect(text).toContain('🏆 Top holder: ?');
+  });
+
+  it('renders LP/verified/transfers as ❌ (not the old ⚠️) when explicitly false', () => {
+    const text = formatCard({
+      ...CARD,
+      security: {
+        ...CARD.security!,
+        lpBurnedOrLocked: false,
+        verified: false,
+        transferable: false,
+        ownerRenounced: false,
+        riskLevel: 'danger',
+      },
+    });
+    expect(text).toContain('🛡 Security: 🧨  renounced ❌ · LP ❌ · verified ❌ · transfers ❌ · honeypot/tax: not measured');
   });
 
   it('renders unknown/absent display fields as ? (MC, ATH, Liq, Vol, Holders)', () => {

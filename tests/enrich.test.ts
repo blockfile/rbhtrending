@@ -57,6 +57,7 @@ describe('enrich', () => {
       sellTaxPct: 'unknown',
       topHolderPct: 'unknown',
       riskLevel: 'unknown',
+      transferable: 'unknown',
     });
   });
 
@@ -72,6 +73,7 @@ describe('enrich', () => {
       sellTaxPct: 'unknown',
       topHolderPct: 'unknown',
       riskLevel: 'unknown',
+      transferable: 'unknown',
     });
   });
 

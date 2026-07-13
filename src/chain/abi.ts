@@ -16,6 +16,9 @@ export const SELECTORS = {
   // swapExactTokensForTokens(uint256,uint256,address[],address,uint256) — used to simulate a
   // sell through the verified router (Task 6 honeypot/tax check).
   swapExactTokensForTokens: '0x38ed1739',
+  // transfer(address,uint256) — used by the v1 Option-A transferability probe (Task 6c): a
+  // self-send simulated from a real holder's own address, no allowance required.
+  transfer: '0xa9059cbb',
 } as const;
 
 /** Left-pads a 20-byte address into a 32-byte ABI word: '0x' + 24 zero-nibbles + 40 lowercase hex chars. */

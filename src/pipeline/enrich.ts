@@ -17,6 +17,7 @@ const UNKNOWN_SECURITY: Security = {
   sellTaxPct: 'unknown',
   topHolderPct: 'unknown',
   riskLevel: 'unknown',
+  transferable: 'unknown',
 };
 
 /**

@@ -11,13 +11,18 @@ import type { SecurityConfig } from '../src/types';
 
 const CFG: SecurityConfig = { sellTaxDangerPct: 30, sellTaxWarnPct: 10, topHolderWarnPct: 25 };
 
+// v1 Option-A reality: honeypot/buyTaxPct/sellTaxPct are permanently 'unknown' out of
+// securityScan (no router to simulate a sell through — see checkHoneypotAndTax). CLEAN
+// reflects that: the four fields the v1 badge actually grades (transferable, lpBurnedOrLocked,
+// ownerRenounced, verified) are known-good; honeypot/tax stay unmeasured.
 const CLEAN: SecurityFields = {
-  honeypot: false,
-  buyTaxPct: 2,
-  sellTaxPct: 2,
+  honeypot: 'unknown',
+  buyTaxPct: 'unknown',
+  sellTaxPct: 'unknown',
   ownerRenounced: true,
   lpBurnedOrLocked: true,
   verified: true,
+  transferable: true,
   topHolderPct: 5,
 };
 
@@ -28,63 +33,72 @@ const ALL_UNKNOWN: SecurityFields = {
   ownerRenounced: 'unknown',
   lpBurnedOrLocked: 'unknown',
   verified: 'unknown',
+  transferable: 'unknown',
   topHolderPct: 'unknown',
 };
 
-describe('scoreSecurity (pure)', () => {
-  it('flags a honeypot as danger', () => {
-    expect(scoreSecurity({ ...CLEAN, honeypot: true }, CFG)).toBe('danger');
+describe('scoreSecurity (pure) — v1 Option-A decision table', () => {
+  it('flags transferable === false as danger (transfers are blocked — hard honeypot signal)', () => {
+    expect(scoreSecurity({ ...CLEAN, transferable: false }, CFG)).toBe('danger');
   });
 
-  it('flags sell tax above the danger threshold as danger', () => {
-    expect(scoreSecurity({ ...CLEAN, sellTaxPct: 35 }, CFG)).toBe('danger');
-  });
-
-  it('flags LP not burned/locked as danger', () => {
+  it('flags lpBurnedOrLocked === false as danger', () => {
     expect(scoreSecurity({ ...CLEAN, lpBurnedOrLocked: false }, CFG)).toBe('danger');
   });
 
-  it('danger takes priority even when other fields are unknown', () => {
-    expect(scoreSecurity({ ...ALL_UNKNOWN, honeypot: true }, CFG)).toBe('danger');
+  it('danger takes priority even when every other field is unknown', () => {
+    expect(scoreSecurity({ ...ALL_UNKNOWN, transferable: false }, CFG)).toBe('danger');
+    expect(scoreSecurity({ ...ALL_UNKNOWN, lpBurnedOrLocked: false }, CFG)).toBe('danger');
   });
 
-  it('flags sell tax in the warn band as warn', () => {
-    // warnPct=10, dangerPct=30 -> 15 is in [warn, danger)
-    expect(scoreSecurity({ ...CLEAN, sellTaxPct: 15 }, CFG)).toBe('warn');
+  it('warns when transferable is unknown (critical field — cannot confirm the token is movable)', () => {
+    expect(scoreSecurity({ ...CLEAN, transferable: 'unknown' }, CFG)).toBe('warn');
   });
 
-  it('flags an un-renounced owner as warn', () => {
+  it('warns when lpBurnedOrLocked is unknown (critical field)', () => {
+    expect(scoreSecurity({ ...CLEAN, lpBurnedOrLocked: 'unknown' }, CFG)).toBe('warn');
+  });
+
+  it('warns when ownerRenounced is explicitly false', () => {
     expect(scoreSecurity({ ...CLEAN, ownerRenounced: false }, CFG)).toBe('warn');
   });
 
-  it('flags a top holder above the warn threshold as warn', () => {
+  it('warns when verified is explicitly false', () => {
+    expect(scoreSecurity({ ...CLEAN, verified: false }, CFG)).toBe('warn');
+  });
+
+  it('does NOT warn when verified is unknown (neutral — avoids over-warning on Blockscout flakiness)', () => {
+    expect(scoreSecurity({ ...CLEAN, verified: 'unknown' }, CFG)).toBe('safe');
+  });
+
+  it('does NOT warn when ownerRenounced is unknown (neutral — avoids over-warning on RPC flakiness)', () => {
+    expect(scoreSecurity({ ...CLEAN, ownerRenounced: 'unknown' }, CFG)).toBe('safe');
+  });
+
+  it('warns when top holder concentration exceeds the configured threshold', () => {
     expect(scoreSecurity({ ...CLEAN, topHolderPct: 30 }, CFG)).toBe('warn');
   });
 
-  it('never returns safe when honeypot is unknown', () => {
-    const result = scoreSecurity({ ...CLEAN, honeypot: 'unknown' }, CFG);
-    expect(result).not.toBe('safe');
-    expect(result).toBe('warn');
-  });
-
-  it('never returns safe when lpBurnedOrLocked is unknown', () => {
-    const result = scoreSecurity({ ...CLEAN, lpBurnedOrLocked: 'unknown' }, CFG);
-    expect(result).not.toBe('safe');
-    expect(result).toBe('warn');
-  });
-
-  it('stays safe when only topHolderPct is unknown (not a critical field)', () => {
-    // securityScan always leaves topHolderPct 'unknown' (GeckoTerminal supplies it later) —
-    // 'safe' must still be reachable as long as the existential-risk fields are known-clean.
-    expect(scoreSecurity({ ...CLEAN, topHolderPct: 'unknown' }, CFG)).toBe('safe');
-  });
-
-  it('returns safe when every field is known and clean', () => {
+  it('returns safe when transferable/LP/owner/verified are known-good and top holder is under the bar', () => {
     expect(scoreSecurity(CLEAN, CFG)).toBe('safe');
   });
 
-  it('returns unknown when every field is unknown (total blackout)', () => {
-    expect(scoreSecurity(ALL_UNKNOWN, CFG)).toBe('unknown');
+  it('stays safe when honeypot/tax are unknown — not measured in v1, and must never block safe', () => {
+    expect(
+      scoreSecurity({ ...CLEAN, honeypot: 'unknown', buyTaxPct: 'unknown', sellTaxPct: 'unknown' }, CFG),
+    ).toBe('safe');
+  });
+
+  it('ignores sellTaxPct entirely — even a value above the old danger threshold does not affect the v1 score', () => {
+    expect(scoreSecurity({ ...CLEAN, sellTaxPct: 99 }, CFG)).toBe('safe');
+  });
+
+  it('ignores honeypot === true entirely — v1 never simulates a sell, so honeypot can never escalate the score', () => {
+    expect(scoreSecurity({ ...CLEAN, honeypot: true }, CFG)).toBe('safe');
+  });
+
+  it('resolves a total blackout to warn (transferable/lp unknown alone forces at least warn), never a bare "safe"', () => {
+    expect(scoreSecurity(ALL_UNKNOWN, CFG)).toBe('warn');
   });
 });
 
@@ -125,8 +139,12 @@ function healthyCall(overrides: Partial<Record<string, CallStub>> = {}): CallStu
   };
 }
 
-function makeDeps(overrides: Partial<Record<string, CallStub>> = {}, isVerified: SecurityDeps['isVerified'] = async () => true): SecurityDeps {
-  return { call: healthyCall(overrides), isVerified };
+function makeDeps(
+  overrides: Partial<Record<string, CallStub>> = {},
+  isVerified: SecurityDeps['isVerified'] = async () => true,
+  recentHolders: SecurityDeps['recentHolders'] = async () => [],
+): SecurityDeps {
+  return { call: healthyCall(overrides), isVerified, recentHolders };
 }
 
 describe('securityScan (stubbed deps, no network)', () => {
@@ -147,7 +165,9 @@ describe('securityScan (stubbed deps, no network)', () => {
     // Live-verified: Robinhood Chain has no standard router (the old ROUTER_ADDRESS constant
     // was wrong and has been deleted — see src/chain/constants.ts). Without a router there's
     // no getAmountsOut/swapExactTokensForTokens to call, so honeypot/tax always degrade to
-    // 'unknown' rather than trusting a nonexistent contract (Task 6c will replace this sim).
+    // 'unknown' permanently in v1 — deferred to v1.1, and per Option-A they no longer affect
+    // the score at all (see scoreSecurity). The scan still warns here because transferable and
+    // lpBurnedOrLocked are 'unknown' with these healthy-but-uninformative stubs.
     const result = await securityScan(makeDeps(), TOKEN, POOL, CFG);
     expect(result.honeypot).toBe('unknown');
     expect(result.sellTaxPct).toBe('unknown');
@@ -189,10 +209,11 @@ describe('securityScan (stubbed deps, no network)', () => {
     expect(result.topHolderPct).toBe('unknown');
   });
 
-  it('never throws even if every call and isVerified reject, and degrades to an all-unknown-ish Security', async () => {
+  it('never throws even if every call, isVerified, and recentHolders reject, and degrades to an all-unknown-ish Security', async () => {
     const deps: SecurityDeps = {
       call: async () => { throw new Error('network down'); },
       isVerified: async () => { throw new Error('network down'); },
+      recentHolders: async () => { throw new Error('network down'); },
     };
     const result = await securityScan(deps, TOKEN, POOL, CFG);
     // owner() reverting is treated as renounced (documented default); everything else that
@@ -202,7 +223,107 @@ describe('securityScan (stubbed deps, no network)', () => {
     expect(result.sellTaxPct).toBe('unknown');
     expect(result.lpBurnedOrLocked).toBe('unknown');
     expect(result.verified).toBe('unknown');
+    expect(result.transferable).toBe('unknown');
     expect(result.topHolderPct).toBe('unknown');
-    expect(['warn', 'unknown']).toContain(result.riskLevel);
+    expect(result.riskLevel).toBe('warn');
+  });
+});
+
+// --- checkTransferable (via securityScan.transferable) -----------------------------------
+
+describe('securityScan — transferability probe (Option-A)', () => {
+  const HOLDER = '0x' + '4'.repeat(39) + 'd';
+
+  function balanceOfCalldata(holder: string): string {
+    return encodeCall(SELECTORS.balanceOf, padAddress(holder));
+  }
+
+  it('resolves transferable=true when a real holder can self-send half their balance', async () => {
+    const deps = makeDeps(
+      {
+        [`${TOKEN.toLowerCase()}:${balanceOfCalldata(HOLDER)}`]: async () => '0x' + encodeUint(1000n),
+        [`${TOKEN.toLowerCase()}:${SELECTORS.transfer}`]: async () => '0x' + encodeUint(1n),
+      },
+      undefined,
+      async () => [HOLDER],
+    );
+    const result = await securityScan(deps, TOKEN, POOL, CFG);
+    expect(result.transferable).toBe(true);
+  });
+
+  it('resolves transferable=false when the self-send reverts (hard honeypot signal) and scores danger', async () => {
+    const deps = makeDeps(
+      {
+        [`${TOKEN.toLowerCase()}:${balanceOfCalldata(HOLDER)}`]: async () => '0x' + encodeUint(1000n),
+        [`${TOKEN.toLowerCase()}:${SELECTORS.transfer}`]: async () => { throw new Error('revert'); },
+      },
+      undefined,
+      async () => [HOLDER],
+    );
+    const result = await securityScan(deps, TOKEN, POOL, CFG);
+    expect(result.transferable).toBe(false);
+    expect(result.riskLevel).toBe('danger');
+  });
+
+  it('leaves transferable unknown when recentHolders resolves an empty list', async () => {
+    const deps = makeDeps({}, undefined, async () => []);
+    const result = await securityScan(deps, TOKEN, POOL, CFG);
+    expect(result.transferable).toBe('unknown');
+  });
+
+  it('leaves transferable unknown when every candidate holder has a zero balance', async () => {
+    const deps = makeDeps(
+      { [`${TOKEN.toLowerCase()}:${balanceOfCalldata(HOLDER)}`]: async () => '0x' + encodeUint(0n) },
+      undefined,
+      async () => [HOLDER],
+    );
+    const result = await securityScan(deps, TOKEN, POOL, CFG);
+    expect(result.transferable).toBe('unknown');
+  });
+
+  it('skips dead addresses and the pool address when picking a candidate holder', async () => {
+    const deps = makeDeps(
+      {
+        [`${TOKEN.toLowerCase()}:${balanceOfCalldata(HOLDER)}`]: async () => '0x' + encodeUint(1000n),
+        [`${TOKEN.toLowerCase()}:${SELECTORS.transfer}`]: async () => '0x' + encodeUint(1n),
+      },
+      undefined,
+      async () => [ZERO_ADDRESS, DEAD_ADDRESS, POOL, HOLDER],
+    );
+    const result = await securityScan(deps, TOKEN, POOL, CFG);
+    expect(result.transferable).toBe(true);
+  });
+
+  it('caps candidate attempts at the first 5 holders (never reaches a 6th, even one that would succeed)', async () => {
+    const zeroHolders = Array.from({ length: 5 }, (_, i) => '0x' + String(i + 1).repeat(39) + 'e');
+    const sixthGoodHolder = '0x' + '9'.repeat(39) + 'f';
+    const overrides: Partial<Record<string, CallStub>> = {
+      [`${TOKEN.toLowerCase()}:${balanceOfCalldata(sixthGoodHolder)}`]: async () => '0x' + encodeUint(1000n),
+      [`${TOKEN.toLowerCase()}:${SELECTORS.transfer}`]: async () => '0x' + encodeUint(1n),
+    };
+    for (const h of zeroHolders) {
+      overrides[`${TOKEN.toLowerCase()}:${balanceOfCalldata(h)}`] = async () => '0x' + encodeUint(0n);
+    }
+    const deps = makeDeps(overrides, undefined, async () => [...zeroHolders, sixthGoodHolder]);
+    const result = await securityScan(deps, TOKEN, POOL, CFG);
+    // If the cap were missing, the 6th holder's nonzero balance + successful transfer would
+    // make this 'true'. Capped at 5 zero-balance candidates, it must stay 'unknown'.
+    expect(result.transferable).toBe('unknown');
+  });
+
+  it('never throws when recentHolders rejects — degrades to unknown', async () => {
+    const deps = makeDeps({}, undefined, async () => { throw new Error('eth_getLogs failed'); });
+    const result = await securityScan(deps, TOKEN, POOL, CFG);
+    expect(result.transferable).toBe('unknown');
+  });
+
+  it('never throws when the balanceOf call rejects for every candidate — degrades to unknown', async () => {
+    const deps = makeDeps(
+      { [`${TOKEN.toLowerCase()}:${balanceOfCalldata(HOLDER)}`]: async () => { throw new Error('rpc down'); } },
+      undefined,
+      async () => [HOLDER],
+    );
+    const result = await securityScan(deps, TOKEN, POOL, CFG);
+    expect(result.transferable).toBe('unknown');
   });
 });

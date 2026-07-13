@@ -80,7 +80,7 @@ const GRADE: Record<'safe' | 'warn' | 'danger' | 'unknown', string> = {
   safe: '🔥', warn: '⚠️', danger: '🧨', unknown: '⚠️',
 };
 const SECURITY_EMOJI: Record<'safe' | 'warn' | 'danger' | 'unknown', string> = {
-  safe: '✅', warn: '⚠️', danger: '🧨', unknown: '⚠️',
+  safe: '✅', warn: '⚠️', danger: '🧨', unknown: '❓',
 };
 
 /**
@@ -92,17 +92,19 @@ export function formatCard(c: TokenCard): string {
   const s = c.security;
   const risk = s?.riskLevel ?? 'unknown';
   const grade = GRADE[risk];
-  const securityBadge = SECURITY_EMOJI[risk] + (risk === 'unknown' ? '?' : '');
+  const securityBadge = SECURITY_EMOJI[risk];
 
-  const honeypot = boolMark(s?.honeypot, '❌', '✅');
-  const buyTax = pctNumOrQ(s?.buyTaxPct);
-  const sellTax = pctNumOrQ(s?.sellTaxPct);
-  const lp = boolMark(s?.lpBurnedOrLocked, '🔒', '⚠️');
+  // v1 Option-A field set: no honeypot/tax simulation on this chain (no standard router) —
+  // the badge instead reports renounce/LP/verified/transferability, and honeypot/tax are
+  // always labeled "not measured" rather than rendering a stale/fake ✅.
   const renounced = boolMark(s?.ownerRenounced, '✅', '❌');
+  const lp = boolMark(s?.lpBurnedOrLocked, '🔒', '❌');
+  const verified = boolMark(s?.verified, '✅', '❌');
+  const transfers = boolMark(s?.transferable, '✅', '❌');
 
   const lines = [
     `${grade} <b>$${escapeHtml(c.symbol)}</b> • ${escapeHtml(c.name)}`,
-    `🛡 Security: ${securityBadge}  (honeypot ${honeypot} · tax ${buyTax}/${sellTax}% · LP ${lp} · renounced ${renounced})`,
+    `🛡 Security: ${securityBadge}  renounced ${renounced} · LP ${lp} · verified ${verified} · transfers ${transfers} · honeypot/tax: not measured`,
   ];
   if (c.live) lines.push(`📈 Now: ${usdOrQ(c.live.nowUsd)} • ${c.live.multiple.toFixed(1)}X`);
 

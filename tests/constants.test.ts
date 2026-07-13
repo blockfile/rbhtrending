@@ -74,6 +74,7 @@ describe('security.ts still exports its public API and uses this module\'s DEAD_
         throw new Error(`unstubbed call: ${to} ${sel}`);
       },
       isVerified: async () => 'unknown',
+      recentHolders: async () => [],
     };
     const result = await securityScan(deps, TOKEN, POOL, CFG);
     expect(result.ownerRenounced).toBe(true);
