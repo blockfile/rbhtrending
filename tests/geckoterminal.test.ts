@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { parsePool, GeckoTerminal } from '../src/sources/geckoterminal';
+import { describe, it, expect, vi } from 'vitest';
+import { parsePool, GeckoTerminal, __resetRateLimiterForTests } from '../src/sources/geckoterminal';
 import type { PoolActivity } from '../src/types';
 
 describe('parsePool', () => {
@@ -383,6 +383,113 @@ describe('GeckoTerminal', () => {
     expect(result.length).toBe(1);
     expect(result[0]?.symbol).toBe('RETRY');
   });
+
+  it('trendingPools requests ?include=base_token so logos come free with the poll', async () => {
+    const mockFetch = async (url: string) => {
+      expect(url).toContain('include=base_token');
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    };
+    const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+    await client.trendingPools();
+  });
+
+  it('newPools requests ?include=base_token so logos come free with the poll', async () => {
+    const mockFetch = async (url: string) => {
+      expect(url).toContain('include=base_token');
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    };
+    const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+    await client.newPools();
+  });
+});
+
+describe('GeckoTerminal include-image mapping (free logos via ?include=base_token)', () => {
+  function poolPayload(includedImageUrl: string | undefined) {
+    return {
+      data: [
+        {
+          id: 'robinhood_0xPoolImg',
+          type: 'pool',
+          attributes: {
+            address: '0xPoolImgAddr',
+            name: 'IMG / VIRTUAL',
+            pool_created_at: '2024-01-15T10:30:00Z',
+            reserve_in_usd: '100000',
+            fdv_usd: '1000000',
+            base_token_price_usd: '0.01',
+            volume_usd: { h1: '30000' },
+            transactions: { h1: { buyers: 50 } },
+          },
+          relationships: {
+            base_token: { data: { id: 'robinhood_0xTOKENIMG' } },
+          },
+        },
+      ],
+      included: [
+        {
+          id: 'robinhood_0xTOKENIMG',
+          type: 'token',
+          attributes: { image_url: includedImageUrl ?? 'missing.png', name: 'IMG', symbol: 'IMG' },
+        },
+      ],
+    };
+  }
+
+  it('maps the included token image onto the matching PoolActivity by base_token id', async () => {
+    const mockFetch = async () =>
+      new Response(JSON.stringify(poolPayload('https://assets.geckoterminal.com/img.png')), { status: 200 });
+    const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+    const [result] = await client.trendingPools();
+    expect(result?.imageUrl).toBe('https://assets.geckoterminal.com/img.png');
+  });
+
+  it('leaves imageUrl undefined when the included image is the missing.png placeholder', async () => {
+    const mockFetch = async () => new Response(JSON.stringify(poolPayload(undefined)), { status: 200 });
+    const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+    const [result] = await client.trendingPools();
+    expect(result?.imageUrl).toBeUndefined();
+  });
+
+  it('leaves imageUrl undefined when there is no included array at all', async () => {
+    const mockFetch = async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'robinhood_0xNoInc',
+              type: 'pool',
+              attributes: {
+                address: '0xNoIncAddr',
+                name: 'NOI / VIRTUAL',
+                pool_created_at: '2024-01-15T10:30:00Z',
+                reserve_in_usd: '100000',
+                fdv_usd: '1000000',
+                base_token_price_usd: '0.01',
+                volume_usd: { h1: '30000' },
+                transactions: { h1: { buyers: 50 } },
+              },
+              relationships: { base_token: { data: { id: 'robinhood_0xNOI' } } },
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+    const [result] = await client.newPools();
+    expect(result?.imageUrl).toBeUndefined();
+  });
+});
+
+describe('GeckoTerminal.hasFreshTokenInfo', () => {
+  it('is false for an address that has never been fetched', () => {
+    const client = new GeckoTerminal({ fetchFn: (async () => new Response('{}')) as any });
+    expect(client.hasFreshTokenInfo('0xNeverFetchedTokenIIII9999999999999999999999')).toBe(false);
+  });
+
+  // The TTL-expiry variant (fake timers) lives at the bottom of this file, after every
+  // real-timer test — the module-scoped rate limiter's `lastCallTime` is real-`Date.now()`
+  // based, so a fake-timer test that runs before a real-timer one can leave it skewed relative
+  // to actual wall-clock time. Keeping all fake-timer tests last avoids that entirely.
 });
 
 describe('GeckoTerminal.tokenInfo', () => {
@@ -445,8 +552,10 @@ describe('GeckoTerminal.tokenInfo', () => {
     const addr = '0x500TokenCCCC3333333333333333333333333333';
     const mockFetch = async () => new Response('server error', { status: 500 });
     const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+    // The info path now retries 3x (Task 13): 2 real inter-attempt rate-limit gaps push this
+    // past vitest's default 5s test timeout.
     await expect(client.tokenInfo(addr)).resolves.toEqual({});
-  });
+  }, 10_000);
 
   it('returns {} without throwing when fetch itself rejects', async () => {
     const addr = '0xThrowTokenDDDD4444444444444444444444444';
@@ -455,7 +564,7 @@ describe('GeckoTerminal.tokenInfo', () => {
     };
     const client = new GeckoTerminal({ fetchFn: mockFetch as any });
     await expect(client.tokenInfo(addr)).resolves.toEqual({});
-  });
+  }, 10_000);
 
   it('omits empty/missing fields instead of mapping them to falsy placeholders', async () => {
     const addr = '0xPartialTokenEEEE5555555555555555555555';
@@ -469,5 +578,122 @@ describe('GeckoTerminal.tokenInfo', () => {
     const client = new GeckoTerminal({ fetchFn: mockFetch as any });
     const info = await client.tokenInfo(addr);
     expect(info).toEqual({});
+  });
+
+  it('retries a 429 on the info path (honors a numeric Retry-After) and succeeds on the next attempt', async () => {
+    vi.useFakeTimers();
+    __resetRateLimiterForTests(); // clean slate — don't inherit drift from a previous test's clock
+    try {
+      const addr = '0x429RetryTokenKKKK1111111111111111111111';
+      let calls = 0;
+      const mockFetch = async () => {
+        calls++;
+        if (calls === 1) {
+          return new Response('rate limited', { status: 429, headers: { 'retry-after': '5' } });
+        }
+        return new Response(JSON.stringify(infoFixture), { status: 200 });
+      };
+      const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+
+      const pending = client.tokenInfo(addr);
+      await vi.advanceTimersByTimeAsync(10); // flush the immediate (no-wait) first attempt
+      expect(calls).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(calls).toBe(1); // still honoring the 5s Retry-After, not the 3s default
+
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(calls).toBe(2);
+
+      const info = await pending;
+      expect(info.imageUrl).toBe(infoFixture.data.attributes.image_url);
+    } finally {
+      vi.useRealTimers();
+      __resetRateLimiterForTests();
+    }
+  });
+
+  it('falls back to a ~3s wait on 429 when no Retry-After header is present', async () => {
+    vi.useFakeTimers();
+    __resetRateLimiterForTests();
+    try {
+      const addr = '0x429DefaultTokenLLLL2222222222222222222222';
+      let calls = 0;
+      const mockFetch = async () => {
+        calls++;
+        if (calls === 1) return new Response('rate limited', { status: 429 });
+        return new Response(JSON.stringify(infoFixture), { status: 200 });
+      };
+      const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+
+      const pending = client.tokenInfo(addr);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(calls).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(calls).toBe(1); // < 3s since the 429 — still waiting
+
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(calls).toBe(2);
+
+      await pending;
+    } finally {
+      vi.useRealTimers();
+      __resetRateLimiterForTests();
+    }
+  });
+
+  it('bumps the info path to 3 attempts — two 429s in a row still succeed on the 3rd', async () => {
+    vi.useFakeTimers();
+    __resetRateLimiterForTests();
+    try {
+      const addr = '0x429TripleTokenMMMM3333333333333333333333';
+      let calls = 0;
+      const mockFetch = async () => {
+        calls++;
+        if (calls < 3) return new Response('rate limited', { status: 429 });
+        return new Response(JSON.stringify(infoFixture), { status: 200 });
+      };
+      const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+
+      const pending = client.tokenInfo(addr);
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      const info = await pending;
+      expect(calls).toBe(3);
+      expect(info.imageUrl).toBe(infoFixture.data.attributes.image_url);
+    } finally {
+      vi.useRealTimers();
+      __resetRateLimiterForTests();
+    }
+  });
+});
+
+// Placed last in the file, after every real-timer test (see the comment in the
+// GeckoTerminal.hasFreshTokenInfo describe block above for why): this is the only test that
+// advances the fake clock hours past "now", and a real-timer test running afterward would
+// otherwise inherit a `lastCallTime` skewed hours away from actual wall-clock time.
+describe('GeckoTerminal.hasFreshTokenInfo TTL expiry', () => {
+  it('is true immediately after a successful tokenInfo fetch, and false again once the 6h TTL expires', async () => {
+    vi.useFakeTimers();
+    __resetRateLimiterForTests();
+    try {
+      const addr = '0xTtlTokenJJJJ0000000000000000000000000000';
+      const mockFetch = async () =>
+        new Response(JSON.stringify({ data: { attributes: { image_url: 'https://x/logo.png' } } }), { status: 200 });
+      const client = new GeckoTerminal({ fetchFn: mockFetch as any });
+
+      const pending = client.tokenInfo(addr);
+      await vi.advanceTimersByTimeAsync(10); // flush the immediate (no-wait) fetch
+      await pending;
+
+      expect(client.hasFreshTokenInfo(addr)).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000 + 1000); // past the 6h TTL
+      expect(client.hasFreshTokenInfo(addr)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      __resetRateLimiterForTests();
+    }
   });
 });

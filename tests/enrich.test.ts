@@ -184,4 +184,31 @@ describe('enrich', () => {
     const card = await enrich(activity(), deps, SECURITY_CFG);
     expect(card.security).toEqual(CLEAN_SECURITY);
   });
+
+  it('falls back to the free include image (activity.imageUrl) when tokenInfo has none (Task 13 Part A)', async () => {
+    const deps: EnrichDeps = {
+      securityScan: async () => SAFE_SECURITY,
+      tokenInfo: async () => ({}),
+    };
+    const card = await enrich(activity({ imageUrl: 'https://free/include-image.png' }), deps, SECURITY_CFG);
+    expect(card.imageUrl).toBe('https://free/include-image.png');
+  });
+
+  it('prefers the tokenInfo image over the free include image when both are present', async () => {
+    const deps: EnrichDeps = {
+      securityScan: async () => SAFE_SECURITY,
+      tokenInfo: async () => ({ imageUrl: 'https://info/logo.png' }),
+    };
+    const card = await enrich(activity({ imageUrl: 'https://free/include-image.png' }), deps, SECURITY_CFG);
+    expect(card.imageUrl).toBe('https://info/logo.png');
+  });
+
+  it('leaves imageUrl undefined when neither tokenInfo nor the activity has one', async () => {
+    const deps: EnrichDeps = {
+      securityScan: async () => SAFE_SECURITY,
+      tokenInfo: async () => ({}),
+    };
+    const card = await enrich(activity(), deps, SECURITY_CFG);
+    expect(card.imageUrl).toBeUndefined();
+  });
 });

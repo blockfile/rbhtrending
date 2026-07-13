@@ -9,6 +9,10 @@ export interface PoolActivity {
   fdvUsd: number;
   poolAddress: string;
   createdAt: number;
+  /** Free per-token logo from the trending/new-pools `?include=base_token` sideload (Task 13
+   * Part A) — no extra network call. Best-effort: absent when GeckoTerminal has no logo (or only
+   * the 'missing.png' placeholder) for this token. */
+  imageUrl?: string;
 }
 
 export interface Security {

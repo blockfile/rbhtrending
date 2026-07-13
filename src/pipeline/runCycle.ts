@@ -6,10 +6,13 @@ import { formatCard, buildButtons, formatFollowUp, type FollowUpData, type Keybo
 import type { Db } from '../db/index';
 import { log } from '../logger';
 
-/** The two GeckoTerminal poll endpoints runCycle needs — matches `GeckoTerminal`'s shape. */
+/** The GeckoTerminal surface runCycle needs — matches `GeckoTerminal`'s shape.
+ * `hasFreshTokenInfo` (Task 13) is a cache-only check (no fetch) backing both the prefetch step
+ * (skip addresses that are already warm) and the post-gate (post as soon as info is cached). */
 export interface GeckoLike {
   trendingPools(): Promise<PoolActivity[]>;
   newPools(): Promise<PoolActivity[]>;
+  hasFreshTokenInfo(address: string): boolean;
 }
 
 /** The one `Telegram` method runCycle needs (photoUrl optional — a card without an image just
@@ -36,11 +39,24 @@ export interface RunCycleDeps {
   enrich?: (activity: PoolActivity, deps: EnrichDeps, securityCfg: AppConfig['security']) => Promise<TokenCard>;
 }
 
+// --- Task 13 rate-resilience knobs -------------------------------------------------------------
+// GeckoTerminal's Demo key allows only ~5-6 /tokens/{addr}/info calls/minute while ~20 tokens can
+// trend at once, so most info calls 429 in a single cycle. Hardcoded (not config) — these are
+// implementation tuning, not user-facing behavior.
+/** Uncached trending tokens to warm the tokenInfo cache for per cycle — kept small and rate-safe
+ * so prefetch doesn't itself burn the whole per-minute budget the post-gate is trying to protect. */
+export const PREFETCH_PER_CYCLE = 5;
+/** How long a trending token may be HELD waiting on cached info before posting anyway (sparse) —
+ * never withhold a real alert forever just because GeckoTerminal never granted a rate-limit slot. */
+export const INFO_GRACE_MS = 3 * 60_000;
+
 /**
- * One poll cycle: fetch trending + new pools, feed already-tracked tokens fresh market-cap
- * reads (posting any milestone/dump follow-ups), and post any newly-trending, not-yet-posted
- * pool. Every external call (gecko fetch, per-pool processing, sweep) is individually
- * try/caught so one bad pool or one bad cycle never kills the process or blocks its siblings.
+ * One poll cycle: fetch trending + new pools, record first-sight for all of them, prefetch a
+ * bounded number of uncached trending tokens' info (Task 13), feed already-tracked tokens fresh
+ * market-cap reads (posting any milestone/dump follow-ups), and post any newly-trending,
+ * not-yet-posted pool that clears the post-gate. Every external call (gecko fetch, recordSeen,
+ * per-pool processing, sweep) is individually try/caught so one bad pool or one bad cycle never
+ * kills the process or blocks its siblings.
  *
  * NOTE: v1 discovery is poll-based only (GeckoTerminal) — there is no WS pair-listener here.
  * Live-caption editing of the original card is deferred to v1.1; v1 delivers the original card
@@ -53,15 +69,26 @@ export async function runCycle(deps: RunCycleDeps, now: number): Promise<void> {
   for (const p of pools) {
     try {
       deps.db.recordSeen(p.address, p.symbol, p.name, now);
+    } catch (err) {
+      log('error', `runCycle: recordSeen failed for ${p.address}: ${(err as Error).message}`);
+    }
+  }
 
+  await prefetchTokenInfo(deps, pools);
+
+  for (const p of pools) {
+    try {
       if (deps.tracker.has(p.address)) {
         await processTrackedPool(deps, p, now);
-      } else if (
-        trends(p, deps.cfg.trending) &&
-        !deps.db.alreadyPosted(p.address) &&
-        deps.tracker.shouldPost(p.address)
-      ) {
-        await postNewTrend(deps, enrichImpl, p, now);
+      } else if (isPostCandidate(deps, p)) {
+        if (shouldPostNow(deps, p.address, now)) {
+          await postNewTrend(deps, enrichImpl, p, now);
+        } else {
+          // Post-gate HOLD (Task 13): info isn't cached yet and the grace period hasn't
+          // elapsed — skip posting this cycle. Prefetch will keep trying to warm it, and it'll
+          // clear the gate (cached, or grace-period expired) on a later cycle.
+          log('info', `runCycle: holding ${p.symbol} (${p.address}) — info not yet cached`);
+        }
       }
     } catch (err) {
       log('error', `runCycle: error processing ${p.address}: ${(err as Error).message}`);
@@ -76,6 +103,44 @@ export async function runCycle(deps: RunCycleDeps, now: number): Promise<void> {
     }
   } catch (err) {
     log('warn', `runCycle: sweep failed: ${(err as Error).message}`);
+  }
+}
+
+/** A pool is eligible to post this (or a later) cycle: it clears the trending gate and has never
+ * been posted. Shared between the prefetch step and the post-gate so both agree on "who's a
+ * candidate" — no point warming info for a pool that isn't going to post anyway. */
+function isPostCandidate(deps: RunCycleDeps, p: PoolActivity): boolean {
+  return trends(p, deps.cfg.trending) && !deps.db.alreadyPosted(p.address) && deps.tracker.shouldPost(p.address);
+}
+
+/** Post-gate (Task 13): a trending, not-yet-posted token posts this cycle only once its
+ * GeckoTerminal info is cached, OR it's been sitting uncached longer than INFO_GRACE_MS — at
+ * which point it posts anyway (sparse) rather than being held forever. */
+function shouldPostNow(deps: RunCycleDeps, address: string, now: number): boolean {
+  if (deps.gecko.hasFreshTokenInfo(address)) return true;
+  const firstSeen = deps.db.firstSeen(address) ?? now;
+  return now - firstSeen >= INFO_GRACE_MS;
+}
+
+/** Prefetch (Task 13): before the post loop, best-effort warm the tokenInfo cache for up to
+ * PREFETCH_PER_CYCLE uncached post-candidate tokens, so they clear the post-gate cached (rich)
+ * on this cycle or the next rather than posting sparse after the grace period. A no-op when the
+ * caller didn't wire a tokenInfo source. Failures are swallowed — same best-effort contract
+ * `enrich`'s own tokenInfo call already has; a cold cache just means the gate falls back to the
+ * grace period instead. */
+async function prefetchTokenInfo(deps: RunCycleDeps, pools: PoolActivity[]): Promise<void> {
+  if (!deps.tokenInfo) return;
+  let budget = PREFETCH_PER_CYCLE;
+  for (const p of pools) {
+    if (budget <= 0) break;
+    if (!isPostCandidate(deps, p)) continue;
+    if (deps.gecko.hasFreshTokenInfo(p.address)) continue;
+    budget--;
+    try {
+      await deps.tokenInfo(p.address);
+    } catch {
+      // best-effort — a failed prefetch just leaves the cache cold; the gate's grace period covers it
+    }
   }
 }
 

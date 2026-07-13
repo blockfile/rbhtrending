@@ -77,7 +77,9 @@ export async function enrich(activity: PoolActivity, deps: EnrichDeps, securityC
     poolAddress: activity.poolAddress,
     createdAt: activity.createdAt,
     holders: 'unknown',
-    imageUrl: info.imageUrl,
+    // Prefer the /info image; fall back to the free `?include=base_token` image (Task 13 Part A)
+    // so every posted card gets a logo even when /info was rate-limited/never cached.
+    imageUrl: info.imageUrl ?? activity.imageUrl,
     twitter: info.twitter,
     telegram: info.telegram,
     website: info.website,

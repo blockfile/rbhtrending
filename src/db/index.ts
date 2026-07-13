@@ -45,6 +45,16 @@ export class Db {
       .run(address, symbol, name, now);
   }
 
+  /** The `first_seen` timestamp recorded by `recordSeen` for this address, or null if it has
+   * never been seen. Backs runCycle's post-gate grace period (Task 13): how long ago a token
+   * first appeared, independent of whether its GeckoTerminal info has been cached yet. */
+  firstSeen(address: string): number | null {
+    const row = this.db.prepare('SELECT first_seen FROM tokens WHERE address = ?').get(address) as
+      | { first_seen: number }
+      | undefined;
+    return row ? row.first_seen : null;
+  }
+
   /** True once a Telegram post row exists for this address (dedupe gate). */
   alreadyPosted(address: string): boolean {
     return !!this.db.prepare('SELECT 1 FROM posts WHERE address = ?').get(address);

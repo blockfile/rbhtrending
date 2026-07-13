@@ -34,6 +34,23 @@ describe('Db', () => {
     });
   });
 
+  describe('firstSeen', () => {
+    it('returns null for an address that was never seen', () => {
+      expect(db.firstSeen('0xNEVER')).toBeNull();
+    });
+
+    it('returns the stored first_seen timestamp after recordSeen', () => {
+      db.recordSeen('0xAAA', 'FOO', 'Foo Token', 1000);
+      expect(db.firstSeen('0xAAA')).toBe(1000);
+    });
+
+    it('keeps the original timestamp — a later recordSeen for the same address does not overwrite it', () => {
+      db.recordSeen('0xAAA', 'FOO', 'Foo Token', 1000);
+      db.recordSeen('0xAAA', 'FOO', 'Foo Token', 5000);
+      expect(db.firstSeen('0xAAA')).toBe(1000);
+    });
+  });
+
   describe('recordPost / getPost', () => {
     it('round-trips messageId and postedAt, defaulting sponsored to 0', () => {
       db.recordPost('0xBBB', 999, 12345);

@@ -102,6 +102,15 @@ async function rateLimit(): Promise<void> {
   lastCallTime = Date.now();
 }
 
+/** Test-only: resets the module-scoped inter-call rate limiter's clock. `lastCallTime` is
+ * real-`Date.now()`-based and shared across every `GeckoTerminal` instance in the process; a
+ * test using fake timers to exercise `fetchWithRetry`'s 429-wait path needs a clean slate rather
+ * than inheriting a timestamp left behind (in real or fake time) by whatever test ran before it.
+ * Not called by production code. */
+export function __resetRateLimiterForTests(): void {
+  lastCallTime = 0;
+}
+
 export interface GeckoTerminalOptions {
   apiKey?: string;
   fetchFn?: typeof fetch;
@@ -119,10 +128,39 @@ export interface GeckoTokenInfo {
 /** Module-scoped cache for tokenInfo — token info (socials/trust score/holder concentration)
  * barely changes cycle to cycle, so re-fetching it every poll would just burn rate-limit budget
  * for no benefit. Shared across GeckoTerminal instances, same pattern as the rateLimit() gate
- * above. 15 minutes comfortably outlives a poll cycle (pollSeconds is on the order of tens of
- * seconds) while still refreshing well within a trading session. */
-const TOKEN_INFO_TTL_MS = 15 * 60 * 1000;
+ * above. 6 hours (Task 13) is the key to coverage across cycles under the Demo key's ~5-6
+ * info-calls/minute ceiling: info barely changes, so a long TTL lets a slow prefetch warm a
+ * token once and have it stay "fresh" (see hasFreshTokenInfo) across many following poll cycles
+ * instead of re-competing for the same scarce rate-limit budget every 15 minutes. */
+const TOKEN_INFO_TTL_MS = 6 * 60 * 60 * 1000;
 const tokenInfoCache = new Map<string, { data: GeckoTokenInfo; expiresAt: number }>();
+
+/** Free per-token logo lookup from a `?include=base_token` poll response's sideloaded `included`
+ * array — no extra network call (Task 13 Part A). Keyed by the included token object's own `id`
+ * (e.g. "robinhood_0x8ff.."), which is exactly what a pool's `relationships.base_token.data.id`
+ * points at. Skips empty/`'missing.png'` images (GeckoTerminal's placeholder for "no logo") so
+ * those tokens correctly fall through to "no image" rather than posting a broken placeholder. */
+function buildImageMap(data: any): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!Array.isArray(data?.included)) return map;
+  for (const item of data.included) {
+    if (!item || item.type !== 'token' || typeof item.id !== 'string') continue;
+    const img = item.attributes?.image_url;
+    if (typeof img === 'string' && img && img !== 'missing.png') {
+      map.set(item.id, img);
+    }
+  }
+  return map;
+}
+
+/** Attaches the free include-image (if any) onto an already-parsed PoolActivity, looked up by the
+ * raw pool's base-token relationship id. Best-effort: no match leaves the PoolActivity unchanged
+ * (imageUrl stays undefined). */
+function withImage(raw: any, pool: PoolActivity, imageMap: Map<string, string>): PoolActivity {
+  const baseTokenId = raw?.relationships?.base_token?.data?.id;
+  const imageUrl = typeof baseTokenId === 'string' ? imageMap.get(baseTokenId) : undefined;
+  return imageUrl ? { ...pool, imageUrl } : pool;
+}
 
 function mapTokenInfo(attrs: any): GeckoTokenInfo {
   const info: GeckoTokenInfo = {};
@@ -160,7 +198,12 @@ export class GeckoTerminal {
     this.fetchFn = opts?.fetchFn || globalThis.fetch;
   }
 
-  private async fetchWithRetry(url: string): Promise<Response> {
+  /**
+   * @param maxAttempts Defaults to 2 (trending/new pools). The info path (Task 13) passes 3 —
+   *   it's the endpoint that actually gets 429'd under the Demo key's tight per-minute ceiling,
+   *   so it gets the extra attempt; bumping every poll endpoint would just burn more budget.
+   */
+  private async fetchWithRetry(url: string, maxAttempts = 2): Promise<Response> {
     const headers: HeadersInit = {
       accept: 'application/json',
     };
@@ -174,7 +217,7 @@ export class GeckoTerminal {
 
     let lastError: Error | null = null;
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5000);
 
@@ -188,13 +231,22 @@ export class GeckoTerminal {
         });
 
         // Return on success or after final attempt
-        if (response.ok || attempt === 2) {
+        if (response.ok || attempt === maxAttempts) {
           return response;
+        }
+
+        if (response.status === 429) {
+          // Give the shared rate-limit window a moment to clear before retrying (Task 13) —
+          // helps a prefetch/info call land a slot instead of instantly re-429ing. Honors a
+          // numeric Retry-After (seconds) if the server sent one, else waits 3s.
+          const retryAfterSec = Number(response.headers?.get?.('retry-after'));
+          const waitMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0 ? retryAfterSec * 1000 : 3000;
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
         }
         // If !response.ok and not final attempt, retry
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        if (attempt === 2) {
+        if (attempt === maxAttempts) {
           // Final attempt threw, rethrow
           throw lastError;
         }
@@ -208,8 +260,14 @@ export class GeckoTerminal {
     throw lastError || new Error('Fetch failed after retries');
   }
 
-  async trendingPools(): Promise<PoolActivity[]> {
-    const url = `${this.baseUrl}/trending_pools`;
+  /**
+   * Shared body for trendingPools/newPools (Task 13): appends `?include=base_token` so
+   * GeckoTerminal sideloads each pool's base-token object — including its logo — in the SAME
+   * response, at no extra rate-limit cost (Part A's free-logos-for-all-tokens fix). Parses each
+   * raw pool via `parsePool`, then best-effort attaches the matching free image.
+   */
+  private async fetchPoolList(path: 'trending_pools' | 'new_pools'): Promise<PoolActivity[]> {
+    const url = `${this.baseUrl}/${path}?include=base_token`;
     const response = await this.fetchWithRetry(url);
 
     if (!response.ok) {
@@ -221,32 +279,33 @@ export class GeckoTerminal {
       return [];
     }
 
-    return data.data.map((raw: any) => parsePool(raw)).filter((p: PoolActivity | null) => p !== null);
+    const imageMap = buildImageMap(data);
+    const results: PoolActivity[] = [];
+    for (const raw of data.data) {
+      const parsed = parsePool(raw);
+      if (parsed) results.push(withImage(raw, parsed, imageMap));
+    }
+    return results;
+  }
+
+  async trendingPools(): Promise<PoolActivity[]> {
+    return this.fetchPoolList('trending_pools');
   }
 
   async newPools(): Promise<PoolActivity[]> {
-    const url = `${this.baseUrl}/new_pools`;
-    const response = await this.fetchWithRetry(url);
-
-    if (!response.ok) {
-      throw new Error(`GeckoTerminal API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    if (!Array.isArray(data.data)) {
-      return [];
-    }
-
-    return data.data.map((raw: any) => parsePool(raw)).filter((p: PoolActivity | null) => p !== null);
+    return this.fetchPoolList('new_pools');
   }
 
   /**
    * Best-effort token-info lookup (socials, logo, gt_score trust rating, top-10 holder
    * concentration) — GET /tokens/{address}/info, via the same fetchWithRetry (rate limiter +
-   * Authorization header + timeout) the poll endpoints use. Never throws: any failure (non-ok
-   * response, thrown network error, malformed body) resolves to `{}` so a bad token-info fetch
-   * never blocks or fails a card. Cached per lowercased address for 15 minutes (see
-   * tokenInfoCache above) to avoid re-hitting a rate-limited endpoint on every poll cycle.
+   * demo-key header + timeout) the poll endpoints use, but with 3 attempts instead of 2 (Task
+   * 13) — this is the endpoint that actually gets 429'd under the Demo key's ~5-6 calls/minute
+   * ceiling, and fetchWithRetry now waits out a 429 before retrying, so the extra attempt has a
+   * real shot at landing. Never throws: any failure (non-ok response, thrown network error,
+   * malformed body) resolves to `{}` so a bad token-info fetch never blocks or fails a card.
+   * Cached per lowercased address for 6 hours (see tokenInfoCache above) to avoid re-hitting a
+   * rate-limited endpoint on every poll cycle.
    */
   async tokenInfo(address: string): Promise<GeckoTokenInfo> {
     const key = address.toLowerCase();
@@ -258,7 +317,7 @@ export class GeckoTerminal {
 
     try {
       const url = `${this.baseUrl}/tokens/${address}/info`;
-      const response = await this.fetchWithRetry(url);
+      const response = await this.fetchWithRetry(url, 3);
       if (!response.ok) return {};
 
       const data = await response.json();
@@ -271,5 +330,16 @@ export class GeckoTerminal {
     } catch {
       return {};
     }
+  }
+
+  /**
+   * True iff a non-expired tokenInfo cache entry exists for this address — checks the cache
+   * WITHOUT fetching (Task 13). Backs runCycle's prefetch (skip addresses that are already warm)
+   * and post-gate (post a trending token as soon as its info is cached, instead of waiting out
+   * the grace period).
+   */
+  hasFreshTokenInfo(address: string): boolean {
+    const cached = tokenInfoCache.get(address.toLowerCase());
+    return !!cached && cached.expiresAt > Date.now();
   }
 }

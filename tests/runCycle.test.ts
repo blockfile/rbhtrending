@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { runCycle, type RunCycleDeps, type GeckoLike, type TelegramLike } from '../src/pipeline/runCycle';
+import {
+  runCycle,
+  type RunCycleDeps,
+  type GeckoLike,
+  type TelegramLike,
+  PREFETCH_PER_CYCLE,
+  INFO_GRACE_MS,
+} from '../src/pipeline/runCycle';
 import { Db } from '../src/db/index';
 import { Tracker } from '../src/pipeline/trending';
 import type {
@@ -61,10 +68,18 @@ async function fakeEnrich(activity: PoolActivity): Promise<TokenCard> {
   };
 }
 
-function gecko(trending: PoolActivity[], fresh: PoolActivity[] = []): GeckoLike {
+/** `hasFreshTokenInfo` defaults to always-true so every pre-Task-13 test — which expects a
+ * trending pool to post in the very same cycle it first appears — keeps working unmodified; the
+ * post-gate tests below override it explicitly to exercise HOLD/prefetch behavior. */
+function gecko(
+  trending: PoolActivity[],
+  fresh: PoolActivity[] = [],
+  opts: { hasFreshTokenInfo?: (address: string) => boolean } = {},
+): GeckoLike {
   return {
     trendingPools: async () => trending,
     newPools: async () => fresh,
+    hasFreshTokenInfo: opts.hasFreshTokenInfo ?? (() => true),
   };
 }
 
@@ -190,6 +205,7 @@ describe('runCycle', () => {
         throw new Error('network down');
       },
       newPools: async () => [pool({ address: '0xOK', liquidityUsd: 6000, volume1hUsd: 20000, buyers1h: 50 })],
+      hasFreshTokenInfo: () => true,
     };
     const deps = baseDeps({ gecko: badGecko });
 
@@ -215,5 +231,74 @@ describe('runCycle', () => {
     expect(sends[0].text).toContain('GOOD');
     expect(db.alreadyPosted('0xBAD')).toBe(false);
     expect(db.alreadyPosted('0xGOOD')).toBe(true);
+  });
+
+  describe('post-gate + prefetch (Task 13 — rate-resilient enrichment)', () => {
+    it('holds a trending token whose info is not cached and was just first-seen (no post this cycle)', async () => {
+      const trending = pool({ address: '0xHOLD', liquidityUsd: 6000, volume1hUsd: 20000, buyers1h: 50 });
+      const deps = baseDeps({ gecko: gecko([trending], [], { hasFreshTokenInfo: () => false }) });
+
+      await runCycle(deps, 1000);
+
+      expect(sends).toHaveLength(0);
+      expect(db.alreadyPosted('0xHOLD')).toBe(false);
+      expect(tracker.has('0xHOLD')).toBe(false);
+      expect(wasSeen(db, '0xHOLD')).toBe(true);
+    });
+
+    it('posts a held token once hasFreshTokenInfo becomes true, well inside the grace period', async () => {
+      const trending = pool({ address: '0xWARM', liquidityUsd: 6000, volume1hUsd: 20000, buyers1h: 50 });
+      let fresh = false;
+      const fakeGecko = gecko([trending], [], { hasFreshTokenInfo: () => fresh });
+      const deps = baseDeps({ gecko: fakeGecko });
+
+      await runCycle(deps, 1000);
+      expect(sends).toHaveLength(0); // held — not cached yet
+
+      fresh = true;
+      await runCycle(deps, 2000); // still well under INFO_GRACE_MS later
+      expect(sends).toHaveLength(1);
+      expect(db.alreadyPosted('0xWARM')).toBe(true);
+    });
+
+    it('posts a trending token without cached info once INFO_GRACE_MS has elapsed since first-seen', async () => {
+      const trending = pool({ address: '0xGRACE', liquidityUsd: 6000, volume1hUsd: 20000, buyers1h: 50 });
+      const deps = baseDeps({ gecko: gecko([trending], [], { hasFreshTokenInfo: () => false }) });
+
+      await runCycle(deps, 1000);
+      expect(sends).toHaveLength(0); // held first cycle
+
+      await runCycle(deps, 1000 + INFO_GRACE_MS + 1);
+      expect(sends).toHaveLength(1);
+      expect(db.alreadyPosted('0xGRACE')).toBe(true);
+    });
+
+    it('prefetches uncached trending tokens before the post loop, capped at PREFETCH_PER_CYCLE', async () => {
+      const pools = Array.from({ length: PREFETCH_PER_CYCLE + 2 }, (_, i) =>
+        pool({ address: `0xPRE${i}`, liquidityUsd: 6000, volume1hUsd: 20000, buyers1h: 50, symbol: `P${i}` }),
+      );
+      const calls: string[] = [];
+      const deps = baseDeps({
+        gecko: gecko(pools, [], { hasFreshTokenInfo: () => false }),
+        tokenInfo: async (addr) => {
+          calls.push(addr);
+          return {};
+        },
+      });
+
+      await runCycle(deps, 1000);
+
+      expect(calls.length).toBe(PREFETCH_PER_CYCLE);
+      expect(sends).toHaveLength(0); // fake never reports fresh, and none are past the grace period yet
+    });
+
+    it('does not prefetch when no tokenInfo dep is provided', async () => {
+      const trending = pool({ address: '0xNOPREFETCH', liquidityUsd: 6000, volume1hUsd: 20000, buyers1h: 50 });
+      const deps = baseDeps({ gecko: gecko([trending], [], { hasFreshTokenInfo: () => true }) });
+      delete (deps as Partial<RunCycleDeps>).tokenInfo;
+
+      await expect(runCycle(deps, 1000)).resolves.not.toThrow();
+      expect(sends).toHaveLength(1); // hasFreshTokenInfo true — posts regardless of prefetch
+    });
   });
 });
