@@ -116,9 +116,17 @@ TELEGRAM_CHAT_ID=-100xxxxxxxxxx
 
 **Files:** Create `src/chain/constants.ts`.
 
-**Interfaces:** Produces `ROUTER_ADDRESS`, `WETH_ADDRESS`, `FACTORY_ADDRESS`, `PAIR_CREATED_TOPIC0`, `BLOCKSCOUT_BASE`, `CHAIN_ID = 4663`, `DEAD_ADDRESSES` (0x000…0, 0x…dead) — all filled with the **verified** hex from Task 0 (no placeholders; if Task 0 hasn't run, it MUST run first).
+**Interfaces:** Produces `ROUTER_ADDRESS`, `FACTORY_ADDRESS`, `PAIR_CREATED_TOPIC0`, `V2_SWAP_TOPIC0`, `BLOCKSCOUT_BASE`, `CHAIN_ID = 4663`, `DEX = 'uniswap-v2'`, `DEAD_ADDRESSES`.
 
-- [ ] Create the file with the real values; `git commit -m "feat: verified RH chain constants"`.
+**VERIFIED via spike 2026-07-13 (chain probed live):**
+- `CHAIN_ID = 4663` (confirmed via `eth_chainId`).
+- **DEX = Uniswap V2** — pairs expose `getReserves()`; standard V2 event topics apply.
+- `V2_SWAP_TOPIC0 = '0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822'` (Swap; used to find router / count swaps).
+- `ROUTER_ADDRESS = '0xccc88a9d1b4ed6b0eaba998850414b24f1c315be'` — the `.to` of a live swap tx. **Task 6 MUST verify** this is the canonical V2 router by calling `factory()` (`0xc45a0155`) and `WETH()` (`0xad5c4648`) and confirming a `getAmountsOut` round-trips; if it's an aggregator, discover the real router from `factory()` off a pair or fall back to swapping directly against the pair.
+- **Quote tokens vary** — pools pair against VIRTUAL (`0xc6911796042b15d7fa4f6cde69e245ddcd3d9c31`) or WETH, not always WETH. The honeypot sim simulates **token → its pool quote token** (read `token0()/token1()`), not always token→WETH. GeckoTerminal supplies USD liquidity/price regardless of quote.
+- `FACTORY_ADDRESS` / `PAIR_CREATED_TOPIC0`: only needed for the OPTIONAL WS new-pair listener; discovery works via GeckoTerminal `new_pools` polling alone. Derive the factory from `router.factory()` in Task 5; `PAIR_CREATED_TOPIC0 = keccak256("PairCreated(address,address,address,uint256)")`.
+
+- [ ] Create the file with the verified values above; `git commit -m "feat: verified RH chain constants"`.
 
 ---
 
