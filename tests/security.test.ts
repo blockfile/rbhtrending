@@ -148,13 +148,17 @@ describe('securityScan (stubbed deps, no network)', () => {
     expect(result.ownerRenounced).toBe(true);
   });
 
-  it('flags honeypot true when the sell simulation call reverts', async () => {
+  it('degrades honeypot/tax to unknown (not true) when the sell simulation call reverts', async () => {
+    // Pool-impersonation reverts on ERC-20 allowance for every token, not just honeypots, so
+    // a revert here can't be trusted as a honeypot signal (see task-6-fix-brief.md).
     const deps = makeDeps({
       [`${ROUTER_ADDRESS}:${SELECTORS.swapExactTokensForTokens}`]: async () => { throw new Error('revert'); },
     });
     const result = await securityScan(deps, TOKEN, POOL, CFG);
-    expect(result.honeypot).toBe(true);
+    expect(result.honeypot).toBe('unknown');
     expect(result.sellTaxPct).toBe('unknown');
+    expect(result.riskLevel).not.toBe('danger');
+    expect(result.riskLevel).toBe('warn');
   });
 
   it('degrades honeypot/tax to unknown (not true) when the router factory() call reverts', async () => {

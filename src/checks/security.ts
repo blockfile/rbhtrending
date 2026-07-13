@@ -154,12 +154,14 @@ interface HoneypotTaxResult {
  * actual quote token), then simulates a sell of a nominal amount impersonating the pool as
  * the seller (the closest thing to "a holder" this scan has without a discovered real
  * holder or state-override support in `SecurityDeps.call`) via
- * swapExactTokensForTokens. honeypot = that sell simulation reverts; sellTaxPct = the
- * shortfall between the pure-AMM expected output and the simulated actual output.
+ * swapExactTokensForTokens. On success, honeypot = false and sellTaxPct = the shortfall
+ * between the pure-AMM expected output and the simulated actual output.
  *
  * Router-verification failures (unverifiable router, bad path, no liquidity) degrade to
- * 'unknown' — only a revert on the *sell* call itself, after the router is proven to work,
- * is treated as honeypot=true.
+ * 'unknown'. A revert on the *sell* call itself also degrades to 'unknown' rather than
+ * honeypot=true: pool-impersonation reverts on ERC-20 allowance for every token (a pair
+ * never approves the router to spend its own tokens), so a revert here can't yet be
+ * distinguished from a real honeypot — see the INTERIM comment below.
  */
 async function checkHoneypotAndTax(deps: SecurityDeps, tokenAddr: string, poolAddr: string): Promise<HoneypotTaxResult> {
   const UNKNOWN: HoneypotTaxResult = { honeypot: 'unknown', sellTaxPct: 'unknown' };
@@ -191,7 +193,10 @@ async function checkHoneypotAndTax(deps: SecurityDeps, tokenAddr: string, poolAd
     const sellTaxPct = actualOut >= expectedOut ? 0 : (Number(expectedOut - actualOut) / Number(expectedOut)) * 100;
     return { honeypot: false, sellTaxPct };
   } catch {
-    return { honeypot: true, sellTaxPct: 'unknown' };
+    // INTERIM: pool-impersonation reverts on allowance for all tokens; cannot distinguish
+    // honeypot from structural revert. Rework with real-holder impersonation or eth_call
+    // state-overrides (live-RPC task) before trusting a revert as a honeypot signal.
+    return { honeypot: 'unknown', sellTaxPct: 'unknown' };
   }
 }
 
