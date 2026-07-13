@@ -4,7 +4,7 @@
 DONE — all requirements met, whole suite green, typecheck clean, commit created.
 
 ## Commit
-`<filled in after commit>` — `feat: rate-resilient enrichment (free logos, warm cache, prefetch + post-when-enriched)`
+`fe72f78` — `feat: rate-resilient enrichment (free logos, warm cache, prefetch + post-when-enriched)`
 
 ## Test Summary
 Full repo suite (`npx vitest run`) → **214/214 passed** across 13 files (up from 193). New
