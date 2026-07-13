@@ -52,6 +52,9 @@ function token(overrides: Partial<GmgnToken> = {}): GmgnToken {
     kolCount: 0,
     sniperCount: 0,
     bundlerRatePct: 0,
+    entrapmentPct: 0,
+    ratTraderPct: 0,
+    botDegenPct: 0,
     washTrading: false,
     hotLevel: 0,
     ...overrides,
@@ -110,7 +113,7 @@ describe('runCycle', () => {
     db.recordPost('0xSEED-DUMMY', 0, 0);
   }
 
-  it('posts only the gate-passing, not-yet-posted token, with photoUrl = logo, and records it as posted', async () => {
+  it('posts only the gate-passing, not-yet-posted token, with photoUrl = DexScreener CDN image (gmgn.ai logos are Cloudflare-blocked for Telegram), and records it as posted', async () => {
     seedNonColdStart();
     const trending = token({ address: '0xTREND', liquidityUsd: 6000, volumeUsd: 20000, buys: 50, logo: 'https://x/logo.png' });
     const flat = token({ address: '0xFLAT', liquidityUsd: 100, volumeUsd: 0, buys: 0 });
@@ -120,7 +123,7 @@ describe('runCycle', () => {
 
     expect(sends).toHaveLength(1);
     expect(sends[0].text).toContain('COOL');
-    expect(sends[0].photoUrl).toBe('https://x/logo.png');
+    expect(sends[0].photoUrl).toBe('https://dd.dexscreener.com/ds-data/tokens/robinhood/0xtrend.png');
     expect(db.alreadyPosted('0xTREND')).toBe(true);
     expect(db.alreadyPosted('0xFLAT')).toBe(false);
     expect(wasSeen(db, '0xTREND')).toBe(true);

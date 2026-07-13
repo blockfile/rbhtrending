@@ -56,6 +56,13 @@ describe('mapToken', () => {
     expect(result?.burnPct).toBe(0); // burn_ratio: 0
   });
 
+  it('scales entrapment_ratio, rat_trader_amount_rate, bot_degen_rate (0..1 fractions) to percents', () => {
+    const result = mapToken(FIXTURE);
+    expect(result?.entrapmentPct).toBeCloseTo(61.17, 10); // entrapment_ratio: 0.6117
+    expect(result?.ratTraderPct).toBeCloseTo(53.95, 10); // rat_trader_amount_rate: 0.5395
+    expect(result?.botDegenPct).toBeCloseTo(9.15, 10); // bot_degen_rate: 0.0915
+  });
+
   it('maps smart-money/KOL/sniper depth counts and bundler rate', () => {
     const result = mapToken(FIXTURE);
     expect(result?.smartMoneyCount).toBe(16); // smart_degen_count

@@ -79,4 +79,10 @@ export interface GmgnToken {
   bundlerRatePct: number;
   washTrading: boolean;
   hotLevel: number;
+  // trade quality — the fields that actually vary between tokens on Robinhood chain, where the
+  // launchpad standardizes the classic security flags (renounced/verified/LP-lock/taxes) to
+  // identical "good" values and they carry no signal
+  entrapmentPct: number;
+  ratTraderPct: number;
+  botDegenPct: number;
 }

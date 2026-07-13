@@ -13,7 +13,7 @@ This is a **separate project** from the Solana pump.fun scanner — different ch
 GMGN openapi market/rank poll (chain=robinhood, interval=1h, limit=100)
         │  ONE call returns every field a card needs: price/MC/liq/vol, holder count,
         │  top-10 %, ATH, honeypot, buy/sell tax, renounced, LP-lock %, verified,
-        │  dev-hold %, plus smart-money / KOL / sniper counts
+        │  dev-hold %, bot-trader / insider / entrapment rates, smart-money / KOL / sniper counts
         ▼
    Trending gate (pipeline/trending.ts → passesGate)
         │  liquidityUsd ≥ minLiquidityUsd AND (volumeUsd ≥ minVolume1hUsd OR buys ≥ minBuyers1h)
@@ -22,7 +22,8 @@ GMGN openapi market/rank poll (chain=robinhood, interval=1h, limit=100)
         │  score 0-100, grade safe/warn/danger, red-flag list — all derived from the GMGN row
         ▼
    Telegram card (telegram.ts → formatCard) → post
-        │
+        │  card photo = DexScreener CDN (dd.dexscreener.com) — GMGN's own logo URLs 403
+        │  (Cloudflare challenge) for Telegram's fetcher; a missing CDN image falls back to text
         ▼
    Tracker follow-ups (pipeline/trending.ts)
         up-Nx milestone alerts + dump-drawdown alerts, driven by the same polled market-cap reads
@@ -41,6 +42,12 @@ SQLite via `better-sqlite3`.
 (`safe` / `warn` / `danger`), and a list of `⚠️` red flags — all computed locally from the fields
 GMGN already returned, no extra calls.
 
+On Robinhood chain every token launches through the same launchpad, so the classic security
+fields come back identically "good" for the whole feed (renounced ✓, verified ✓, LP 95% locked,
+0% tax, no honeypot) — a rubric weighted on those pinned ~every card at 100/100. The score
+therefore starts at a **baseline of 88** and moves mainly on the signals that actually vary
+between tokens; 100 now means "clean AND strongly backed", not just "no rug flags".
+
 **Flags** (pushed in this order; the card joins them with " · "):
 
 | Flag | Rule |
@@ -53,14 +60,27 @@ GMGN already returned, no extra calls.
 | `top 10 owns N%` | top-10 holder share > 50% |
 | `dev holds N%` | dev/team hold % > 15% |
 | `wash trading` | GMGN's own wash-trading flag |
+| `bots N%` | bot-trader share (`bot_degen_rate`) > 50% |
+| `insiders N%` | insider/rat-trader supply (`rat_trader_amount_rate`) > 20% |
+| `N snipers` | sniper count ≥ 20 |
 
-**Grade:** `danger` if honeypot OR sell tax > 30% OR LP-lock < 20%; else `warn` if any flag fired;
-else `safe` (no flags at all).
+**Grade:** `danger` if honeypot OR sell tax > 30% OR LP-lock < 20% OR score < 40; else `warn` if
+any flag fired OR score < 70; else `safe`.
 
-**Score:** starts at 100 and is docked per signal — honeypot −80, not renounced −12, unverified −8,
-LP-lock < 20% −30 (else < 50% −15), sell tax > 30% −30 (else > 10% −15), top-10 > 70% −25 (else >
-50% −12), dev hold > 15% −12, wash trading −20, rug-ratio > 50% −20 — with small bonuses for depth
-(smart-money count ≥ 10 → +5, KOL count ≥ 10 → +5), then clamped to `0..100`.
+**Score:** starts at the 88 baseline, then:
+
+- *Fixed security penalties* (uniform on launchpad tokens, kept for the odd non-standard one):
+  honeypot −80, not renounced −12, unverified −8, LP-lock < 20% −30 (else < 50% −15), sell tax
+  > 30% −30 (else > 10% −15), wash trading −20, rug-ratio > 50% −20.
+- *Proportional penalties* on the fields that vary (each is `perUnit × amount-over-floor`,
+  rounded, capped): top-10 share 0.5/% over 20% (cap 30), dev hold 0.6/% over 2% (cap 20),
+  bot traders 0.3/% over 20% (cap 15), insider supply 0.5/% (cap 15), entrapment 0.2/% over 40%
+  (cap 10), snipers 0.25 each (cap 8), bundled supply 0.5/% over 5% (cap 5), holder count
+  < 100 −5.
+- *Depth bonuses*: smart money +0.3/wallet (cap +7), KOLs +0.2/wallet (cap +5) — max +12, so
+  only a penalty-free token can reach 100.
+
+Clamped to `0..100`.
 
 **Coverage model:** the trending gate is about activity (liquidity/volume/buyers), not safety —
 a flagged token still posts, with its warnings visible on the card. Nothing is silently hidden.

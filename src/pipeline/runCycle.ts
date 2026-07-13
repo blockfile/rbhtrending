@@ -1,6 +1,6 @@
 import type { AppConfig, GmgnToken } from '../types';
 import { passesGate, Tracker, type FollowEvent } from './trending';
-import { formatCard, buildButtons, formatFollowUp, type FollowUpData, type Keyboard } from '../telegram';
+import { formatCard, buildButtons, formatFollowUp, tokenImageUrl, type FollowUpData, type Keyboard } from '../telegram';
 import { assess } from '../checks/assess';
 import type { Db } from '../db/index';
 import { log } from '../logger';
@@ -149,9 +149,9 @@ async function postNewTrend(deps: RunCycleDeps, t: GmgnToken, now: number): Prom
 
   if (deps.dry) {
     log('info', '[DRY] would post:\n' + body);
-    if (t.logo) log('info', `[DRY] image: ${t.logo}`);
+    log('info', `[DRY] image: ${tokenImageUrl(t.address)}`);
   } else {
-    const r = await deps.telegram.send({ text: body, photoUrl: t.logo, buttons });
+    const r = await deps.telegram.send({ text: body, photoUrl: tokenImageUrl(t.address), buttons });
     if (!r.ok) {
       log('warn', `runCycle: telegram send failed for ${t.symbol} (${t.address})`);
       return; // not marked tracked — a failed send is retried next cycle since it was never posted

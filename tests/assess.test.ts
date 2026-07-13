@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { assess } from '../src/checks/assess';
 import type { GmgnToken } from '../src/types';
 
-/** A fully "clean" GmgnToken: no security red flags, healthy depth counts. */
+/** A fully "clean" GmgnToken: no security red flags, every proportional penalty at 0,
+ * healthy depth counts. */
 function token(overrides: Partial<GmgnToken> = {}): GmgnToken {
   return {
     address: '0xCA00000000000000000000000000000000CAFE',
@@ -18,7 +19,7 @@ function token(overrides: Partial<GmgnToken> = {}): GmgnToken {
     buys: 41,
     sells: 30,
     holderCount: 341,
-    top10Pct: 21,
+    top10Pct: 18,
     createdAt: 1752300000000,
     twitter: 'https://x.com/dev',
     telegram: 'https://t.me/c',
@@ -29,13 +30,16 @@ function token(overrides: Partial<GmgnToken> = {}): GmgnToken {
     renounced: true,
     verified: true,
     lpLockedPct: 95,
-    devHoldPct: 5,
+    devHoldPct: 0,
     rugRatioPct: 0,
     burnPct: 0,
     smartMoneyCount: 12,
     kolCount: 14,
-    sniperCount: 3,
+    sniperCount: 0,
     bundlerRatePct: 0,
+    entrapmentPct: 20,
+    ratTraderPct: 0,
+    botDegenPct: 15,
     washTrading: false,
     hotLevel: 3,
     ...overrides,
@@ -43,7 +47,7 @@ function token(overrides: Partial<GmgnToken> = {}): GmgnToken {
 }
 
 /** Same clean baseline but with the smart-money/KOL bonuses zeroed out, so score deltas below
- * can be asserted exactly without the +10 bonus pushing the total into the 100-clamp. */
+ * can be asserted exactly from the 88 baseline without any bonus on top. */
 function neutralToken(overrides: Partial<GmgnToken> = {}): GmgnToken {
   return token({ smartMoneyCount: 0, kolCount: 0, ...overrides });
 }
@@ -56,12 +60,16 @@ describe('assess', () => {
       expect(a.flags).toEqual([]);
     });
 
-    it('scores 100 (bonuses clamped) with the default smart-money/KOL depth', () => {
-      expect(assess(token()).score).toBe(100);
+    it('scores the 88 baseline plus depth bonuses (smart 12 → +4, KOL 14 → +3)', () => {
+      expect(assess(token()).score).toBe(95);
     });
 
-    it('scores exactly 100 with no smart-money/KOL bonus at all', () => {
-      expect(assess(neutralToken()).score).toBe(100);
+    it('scores exactly the 88 baseline with no smart-money/KOL bonus at all', () => {
+      expect(assess(neutralToken()).score).toBe(88);
+    });
+
+    it('reaches 100 only with maxed depth bonuses (+7 smart, +5 KOL)', () => {
+      expect(assess(token({ smartMoneyCount: 35, kolCount: 30 })).score).toBe(100);
     });
   });
 
@@ -107,6 +115,21 @@ describe('assess', () => {
       expect(assess(token({ washTrading: false })).flags).toEqual([]);
     });
 
+    it('botDegenPct > 50 pushes "bots N%", rounded, not at exactly 50', () => {
+      expect(assess(token({ botDegenPct: 50 })).flags).toEqual([]);
+      expect(assess(token({ botDegenPct: 51 })).flags).toEqual(['bots 51%']);
+    });
+
+    it('ratTraderPct > 20 pushes "insiders N%", rounded, not at exactly 20', () => {
+      expect(assess(token({ ratTraderPct: 20 })).flags).toEqual([]);
+      expect(assess(token({ ratTraderPct: 21 })).flags).toEqual(['insiders 21%']);
+    });
+
+    it('sniperCount >= 20 pushes "N snipers", not below', () => {
+      expect(assess(token({ sniperCount: 19 })).flags).toEqual([]);
+      expect(assess(token({ sniperCount: 20 })).flags).toEqual(['20 snipers']);
+    });
+
     it('pushes every triggered flag in the documented order', () => {
       const allBad = token({
         honeypot: true,
@@ -117,6 +140,9 @@ describe('assess', () => {
         top10Pct: 80,
         devHoldPct: 30,
         washTrading: true,
+        botDegenPct: 70,
+        ratTraderPct: 40,
+        sniperCount: 25,
       });
       expect(assess(allBad).flags).toEqual([
         'honeypot',
@@ -127,6 +153,9 @@ describe('assess', () => {
         'top 10 owns 80%',
         'dev holds 30%',
         'wash trading',
+        'bots 70%',
+        'insiders 40%',
+        '25 snipers',
       ]);
     });
   });
@@ -138,6 +167,14 @@ describe('assess', () => {
 
     it('is warn when flags exist but no danger condition is met', () => {
       expect(assess(token({ devHoldPct: 16 })).grade).toBe('warn');
+    });
+
+    it('is warn when the score falls below 70 even with no flags at all', () => {
+      // rat 10% (-5), bots 40% (-6), entrapment 100% (-10) — none crosses its flag threshold
+      const a = assess(neutralToken({ ratTraderPct: 10, botDegenPct: 40, entrapmentPct: 100 }));
+      expect(a.flags).toEqual([]);
+      expect(a.score).toBe(67);
+      expect(a.grade).toBe('warn');
     });
 
     it('honeypot forces danger even if nothing else is wrong', () => {
@@ -155,66 +192,119 @@ describe('assess', () => {
       // boundary: exactly 20 does not force danger (still a flag => warn, since <50)
       expect(assess(token({ lpLockedPct: 20 })).grade).toBe('warn');
     });
+
+    it('a score below 40 forces danger even without a hard security condition', () => {
+      // top10 90% (-30 cap) + dev 52% (-20 cap) → 88 - 50 = 38
+      const a = assess(neutralToken({ top10Pct: 90, devHoldPct: 52 }));
+      expect(a.score).toBe(38);
+      expect(a.grade).toBe('danger');
+    });
   });
 
-  describe('score', () => {
+  describe('score — security penalties (fixed)', () => {
     it('honeypot subtracts 80', () => {
-      expect(assess(neutralToken({ honeypot: true })).score).toBe(20);
+      expect(assess(neutralToken({ honeypot: true })).score).toBe(8);
     });
 
     it('an active (non-renounced) owner subtracts 12', () => {
-      expect(assess(neutralToken({ renounced: false })).score).toBe(88);
+      expect(assess(neutralToken({ renounced: false })).score).toBe(76);
     });
 
     it('an unverified contract subtracts 8', () => {
-      expect(assess(neutralToken({ verified: false })).score).toBe(92);
+      expect(assess(neutralToken({ verified: false })).score).toBe(80);
     });
 
     it('LP-lock tiers: <20% subtracts 30, 20-50% subtracts 15, >=50% subtracts nothing', () => {
-      expect(assess(neutralToken({ lpLockedPct: 19 })).score).toBe(70);
-      expect(assess(neutralToken({ lpLockedPct: 49 })).score).toBe(85);
-      expect(assess(neutralToken({ lpLockedPct: 50 })).score).toBe(100);
+      expect(assess(neutralToken({ lpLockedPct: 19 })).score).toBe(58);
+      expect(assess(neutralToken({ lpLockedPct: 49 })).score).toBe(73);
+      expect(assess(neutralToken({ lpLockedPct: 50 })).score).toBe(88);
     });
 
     it('sell-tax tiers: >30% subtracts 30, >10% subtracts 15, <=10% subtracts nothing', () => {
-      expect(assess(neutralToken({ sellTaxPct: 31 })).score).toBe(70);
-      expect(assess(neutralToken({ sellTaxPct: 11 })).score).toBe(85);
-      expect(assess(neutralToken({ sellTaxPct: 10 })).score).toBe(100);
-    });
-
-    it('top-10 tiers: >70% subtracts 25, >50% subtracts 12, <=50% subtracts nothing', () => {
-      expect(assess(neutralToken({ top10Pct: 71 })).score).toBe(75);
-      expect(assess(neutralToken({ top10Pct: 51 })).score).toBe(88);
-      expect(assess(neutralToken({ top10Pct: 50 })).score).toBe(100);
-    });
-
-    it('devHoldPct > 15% subtracts 12, not at exactly 15%', () => {
-      expect(assess(neutralToken({ devHoldPct: 16 })).score).toBe(88);
-      expect(assess(neutralToken({ devHoldPct: 15 })).score).toBe(100);
+      expect(assess(neutralToken({ sellTaxPct: 31 })).score).toBe(58);
+      expect(assess(neutralToken({ sellTaxPct: 11 })).score).toBe(73);
+      expect(assess(neutralToken({ sellTaxPct: 10 })).score).toBe(88);
     });
 
     it('washTrading subtracts 20', () => {
-      expect(assess(neutralToken({ washTrading: true })).score).toBe(80);
+      expect(assess(neutralToken({ washTrading: true })).score).toBe(68);
     });
 
     it('rugRatioPct > 50% subtracts 20, not at exactly 50%', () => {
-      expect(assess(neutralToken({ rugRatioPct: 51 })).score).toBe(80);
-      expect(assess(neutralToken({ rugRatioPct: 50 })).score).toBe(100);
+      expect(assess(neutralToken({ rugRatioPct: 51 })).score).toBe(68);
+      expect(assess(neutralToken({ rugRatioPct: 50 })).score).toBe(88);
+    });
+  });
+
+  describe('score — holder-distribution penalties (proportional)', () => {
+    it('top10: half a point per % above 20, capped at 30', () => {
+      expect(assess(neutralToken({ top10Pct: 20 })).score).toBe(88); // at the free floor
+      expect(assess(neutralToken({ top10Pct: 30 })).score).toBe(83); // -5
+      expect(assess(neutralToken({ top10Pct: 60 })).score).toBe(68); // -20
+      expect(assess(neutralToken({ top10Pct: 90 })).score).toBe(58); // -35 → cap 30
     });
 
-    it('smartMoneyCount >= 10 adds 5 and kolCount >= 10 adds 5, independently, below the clamp', () => {
-      const base = neutralToken({ washTrading: true }); // 100 - 20 = 80
-      expect(assess(base).score).toBe(80);
-      expect(assess({ ...base, smartMoneyCount: 10 }).score).toBe(85);
-      expect(assess({ ...base, kolCount: 10 }).score).toBe(85);
-      expect(assess({ ...base, smartMoneyCount: 10, kolCount: 10 }).score).toBe(90);
-      expect(assess({ ...base, smartMoneyCount: 9 }).score).toBe(80); // below threshold — no bonus
+    it('dev hold: 0.6 points per % above 2, capped at 20', () => {
+      expect(assess(neutralToken({ devHoldPct: 2 })).score).toBe(88); // at the free floor
+      expect(assess(neutralToken({ devHoldPct: 12 })).score).toBe(82); // -6
+      expect(assess(neutralToken({ devHoldPct: 22 })).score).toBe(76); // -12
+      expect(assess(neutralToken({ devHoldPct: 52 })).score).toBe(68); // -30 → cap 20
     });
 
-    it('clamps at 100 when bonuses would push the raw total above it', () => {
-      expect(assess(token()).score).toBe(100); // 100 + 5 + 5 = 110, clamped
+    it('a holder base under 100 subtracts 5', () => {
+      expect(assess(neutralToken({ holderCount: 99 })).score).toBe(83);
+      expect(assess(neutralToken({ holderCount: 100 })).score).toBe(88);
+    });
+  });
+
+  describe('score — trade-quality penalties (proportional)', () => {
+    it('bot traders: 0.3 points per % above 20, capped at 15', () => {
+      expect(assess(neutralToken({ botDegenPct: 20 })).score).toBe(88); // at the free floor
+      expect(assess(neutralToken({ botDegenPct: 40 })).score).toBe(82); // -6
+      expect(assess(neutralToken({ botDegenPct: 90 })).score).toBe(73); // -21 → cap 15
     });
 
+    it('insider (rat-trader) supply: half a point per %, capped at 15', () => {
+      expect(assess(neutralToken({ ratTraderPct: 10 })).score).toBe(83); // -5
+      expect(assess(neutralToken({ ratTraderPct: 40 })).score).toBe(73); // -20 → cap 15
+    });
+
+    it('entrapment: 0.2 points per % above 40, capped at 10', () => {
+      expect(assess(neutralToken({ entrapmentPct: 40 })).score).toBe(88); // at the free floor
+      expect(assess(neutralToken({ entrapmentPct: 60 })).score).toBe(84); // -4
+      expect(assess(neutralToken({ entrapmentPct: 100 })).score).toBe(78); // -12 → cap 10
+    });
+
+    it('snipers: a quarter point each, capped at 8', () => {
+      expect(assess(neutralToken({ sniperCount: 8 })).score).toBe(86); // -2
+      expect(assess(neutralToken({ sniperCount: 40 })).score).toBe(80); // -10 → cap 8
+    });
+
+    it('bundled supply: half a point per % above 5, capped at 5', () => {
+      expect(assess(neutralToken({ bundlerRatePct: 5 })).score).toBe(88); // at the free floor
+      expect(assess(neutralToken({ bundlerRatePct: 15 })).score).toBe(83); // -5
+      expect(assess(neutralToken({ bundlerRatePct: 25 })).score).toBe(83); // -10 → cap 5
+    });
+  });
+
+  describe('score — depth bonuses (graduated)', () => {
+    it('smart money adds 0.3 per wallet, capped at 7', () => {
+      expect(assess(neutralToken({ smartMoneyCount: 10 })).score).toBe(91); // +3
+      expect(assess(neutralToken({ smartMoneyCount: 30 })).score).toBe(95); // +9 → cap 7
+    });
+
+    it('KOLs add 0.2 per wallet, capped at 5', () => {
+      expect(assess(neutralToken({ kolCount: 10 })).score).toBe(90); // +2
+      expect(assess(neutralToken({ kolCount: 30 })).score).toBe(93); // +6 → cap 5
+    });
+
+    it('bonuses cannot mask penalties past 100', () => {
+      // max bonuses (+12) on the clean 88 baseline land exactly at 100, never above
+      expect(assess(neutralToken({ smartMoneyCount: 100, kolCount: 100 })).score).toBe(100);
+    });
+  });
+
+  describe('score — clamping', () => {
     it('clamps at 0 for a maximally bad token', () => {
       const worst = token({
         honeypot: true,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  escapeHtml, formatCard, formatFollowUp, buildButtons, Telegram, ageStr,
+  escapeHtml, formatCard, formatFollowUp, buildButtons, tokenImageUrl, Telegram, ageStr,
   type FollowUpData,
 } from '../src/telegram';
 import { assess } from '../src/checks/assess';
@@ -29,6 +29,18 @@ describe('buildButtons', () => {
     expect(kb[0].map((b) => b.text)).toEqual(['📊 Chart', '💱 Trade']);
     const off = buildButtons(ADDR, { chart: false, scan: false, trade: false });
     expect(off).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tokenImageUrl
+// ---------------------------------------------------------------------------
+
+describe('tokenImageUrl', () => {
+  it('builds the DexScreener token-image CDN URL with a lowercased address', () => {
+    expect(tokenImageUrl(ADDR)).toBe(
+      'https://dd.dexscreener.com/ds-data/tokens/robinhood/0xca00000000000000000000000000000000cafe.png',
+    );
   });
 });
 
@@ -78,6 +90,9 @@ const TOKEN: GmgnToken = {
   kolCount: 14,
   sniperCount: 3,
   bundlerRatePct: 0,
+  entrapmentPct: 20,
+  ratTraderPct: 0,
+  botDegenPct: 15,
   washTrading: false,
   hotLevel: 3,
 };
@@ -110,7 +125,8 @@ describe('formatCard', () => {
     const a = assess(TOKEN);
     const text = formatCard(TOKEN, a);
     expect(text).toContain('🔥 <b>$HOOD</b> • Cool &lt;Token&gt;');
-    expect(text).toMatch(/⭐ Score: 100\/100 \| ⏱ \d+[mhd]/);
+    // 88 baseline -1 top10(21%) -2 dev(5%) -1 snipers(3) +4 smart(12) +3 KOL(14) = 91
+    expect(text).toMatch(/⭐ Score: 91\/100 \| ⏱ \d+[mhd]/);
     expect(text).toContain('💰 MC: $184.0k • ⇡ ATH $240.0k');
     expect(text).toContain('💧 Liq: $12.3k');
     expect(text).toContain('📊 Vol 1h: $27.6k • 512 swaps');
@@ -126,7 +142,7 @@ describe('formatCard', () => {
   it('omits the ⏱ age segment when createdAt is 0/absent', () => {
     const a = assess(TOKEN);
     const text = formatCard({ ...TOKEN, createdAt: 0 }, a);
-    expect(text).toContain('⭐ Score: 100/100');
+    expect(text).toContain('⭐ Score: 91/100');
     expect(text).not.toContain('⏱');
   });
 

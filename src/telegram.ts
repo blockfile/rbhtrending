@@ -24,6 +24,17 @@ export interface SendResult {
 const GMGN_TOKEN_BASE = 'https://gmgn.ai/robinhood/token';
 const BLOCKSCOUT_BASE = 'https://robinhoodchain.blockscout.com';
 
+// GMGN's own logo URLs (gmgn.ai/external-res/…) sit behind a Cloudflare JS challenge that 403s
+// every non-browser client — including Telegram's server-side sendPhoto fetcher — so cards sent
+// with them always degrade to text. DexScreener hosts the same tokens' images on a public CDN.
+const DEXSCREENER_IMG_BASE = 'https://dd.dexscreener.com/ds-data/tokens/robinhood';
+
+/** Public CDN image URL for a token's card photo. Not every token has a DexScreener image
+ * (404 → Telegram.send's existing text fallback), but unlike the GMGN logo it CAN succeed. */
+export function tokenImageUrl(address: string): string {
+  return `${DEXSCREENER_IMG_BASE}/${address.toLowerCase()}.png`;
+}
+
 const WEB_BUTTONS: Record<'chart' | 'scan' | 'trade', { text: string; url: (address: string) => string }> = {
   chart: { text: '📊 Chart', url: (address) => `${GMGN_TOKEN_BASE}/${address}` },
   scan: { text: '🔍 Scan', url: (address) => `${BLOCKSCOUT_BASE}/token/${address}` },

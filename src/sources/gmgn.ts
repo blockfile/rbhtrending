@@ -75,6 +75,9 @@ export function mapToken(raw: any): GmgnToken | null {
     bundlerRatePct: pctFromFraction(raw.bundler_rate),
     washTrading: raw.is_wash_trading === true,
     hotLevel: num(raw.hot_level),
+    entrapmentPct: pctFromFraction(raw.entrapment_ratio),
+    ratTraderPct: pctFromFraction(raw.rat_trader_amount_rate),
+    botDegenPct: pctFromFraction(raw.bot_degen_rate),
   };
 }
 
