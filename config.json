@@ -1,6 +1,5 @@
 {
   "trending": { "minLiquidityUsd": 5000, "minVolume1hUsd": 10000, "minBuyers1h": 30, "pollSeconds": 45, "milestones": [2,5,10,25,50,100], "dumpDrawdownPct": 50, "maxPostsPerCycle": 10 },
-  "security": { "sellTaxDangerPct": 30, "sellTaxWarnPct": 10, "topHolderWarnPct": 25 },
   "followUp": { "windowMinutes": 120, "liveEditSec": 45 },
   "buttons": { "chart": true, "scan": true, "trade": true }
 }

@@ -12,9 +12,6 @@ export function loadConfig(path = 'config.json'): AppConfig {
     ['trending.pollSeconds', cfg.trending?.pollSeconds],
     ['trending.dumpDrawdownPct', cfg.trending?.dumpDrawdownPct],
     ['trending.maxPostsPerCycle', cfg.trending?.maxPostsPerCycle],
-    ['security.sellTaxDangerPct', cfg.security?.sellTaxDangerPct],
-    ['security.sellTaxWarnPct', cfg.security?.sellTaxWarnPct],
-    ['security.topHolderWarnPct', cfg.security?.topHolderWarnPct],
     ['followUp.windowMinutes', cfg.followUp?.windowMinutes],
     ['followUp.liveEditSec', cfg.followUp?.liveEditSec],
   ];
@@ -46,8 +43,10 @@ export function loadSecrets(env: Record<string, string | undefined> = process.en
   };
 
   const secrets = {
-    rhRpcUrl: get('RH_RPC_URL'),
-    rhWsUrl: get('RH_WS_URL'),
+    // No longer required (Task G5 removed the on-chain Evm client) — read as optional strings
+    // so a deploy without an RPC still boots.
+    rhRpcUrl: env['RH_RPC_URL'] ?? '',
+    rhWsUrl: env['RH_WS_URL'] ?? '',
     telegramBotToken: get('TELEGRAM_BOT_TOKEN'),
     telegramChatId: get('TELEGRAM_CHAT_ID'),
     geckoTerminalApiKey: env['GECKOTERMINAL_API_KEY'] ?? '', // optional

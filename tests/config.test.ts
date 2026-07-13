@@ -16,11 +16,8 @@ describe('loadConfig', () => {
     expect(typeof cfg.trending.minLiquidityUsd).toBe('number');
   });
 
-  it('loads security and followUp sections', () => {
+  it('loads followUp section', () => {
     const cfg = loadConfig();
-    expect(cfg.security.sellTaxDangerPct).toBe(30);
-    expect(cfg.security.sellTaxWarnPct).toBe(10);
-    expect(cfg.security.topHolderWarnPct).toBe(25);
     expect(cfg.followUp.windowMinutes).toBe(120);
     expect(cfg.followUp.liveEditSec).toBe(45);
   });
@@ -60,11 +57,6 @@ describe('loadConfig', () => {
           maxPostsPerCycle: 10,
           milestones: [2, 5, 10, 25, 50, 100],
         },
-        security: {
-          sellTaxDangerPct: 30,
-          sellTaxWarnPct: 10,
-          topHolderWarnPct: 25,
-        },
         followUp: {
           windowMinutes: 120,
           liveEditSec: 45,
@@ -94,11 +86,6 @@ describe('loadConfig', () => {
           pollSeconds: 45,
           dumpDrawdownPct: 50,
           milestones: [2, 5, 10, 25, 50, 100],
-        },
-        security: {
-          sellTaxDangerPct: 30,
-          sellTaxWarnPct: 10,
-          topHolderWarnPct: 25,
         },
         followUp: {
           windowMinutes: 120,
@@ -131,11 +118,6 @@ describe('loadConfig', () => {
           maxPostsPerCycle: 10,
           milestones: [],
         },
-        security: {
-          sellTaxDangerPct: 30,
-          sellTaxWarnPct: 10,
-          topHolderWarnPct: 25,
-        },
         followUp: {
           windowMinutes: 120,
           liveEditSec: 45,
@@ -167,11 +149,6 @@ describe('loadConfig', () => {
           maxPostsPerCycle: 10,
           milestones: [2, 5, 'ten', 25, 50, 100],
         },
-        security: {
-          sellTaxDangerPct: 30,
-          sellTaxWarnPct: 10,
-          topHolderWarnPct: 25,
-        },
         followUp: {
           windowMinutes: 120,
           liveEditSec: 45,
@@ -202,11 +179,6 @@ describe('loadConfig', () => {
           dumpDrawdownPct: 50,
           maxPostsPerCycle: 10,
           milestones: [2, 5, 10, 25, 50, 100],
-        },
-        security: {
-          sellTaxDangerPct: 30,
-          sellTaxWarnPct: 10,
-          topHolderWarnPct: 25,
         },
         followUp: {
           windowMinutes: 120,
@@ -256,25 +228,17 @@ describe('loadSecrets', () => {
   });
 
   it('throws naming every missing required var', () => {
-    expect(() => loadSecrets({})).toThrow(/RH_RPC_URL.*RH_WS_URL.*TELEGRAM_BOT_TOKEN.*TELEGRAM_CHAT_ID.*GMGN_API_KEY/s);
+    expect(() => loadSecrets({})).toThrow(/TELEGRAM_BOT_TOKEN.*TELEGRAM_CHAT_ID.*GMGN_API_KEY/s);
   });
 
-  it('throws on missing RH_RPC_URL', () => {
-    expect(() => loadSecrets({
-      RH_WS_URL: 'wss://ws.example.com',
+  it('boots without RH_RPC_URL/RH_WS_URL — no longer required now that Evm/on-chain scanning is gone', () => {
+    const s = loadSecrets({
       TELEGRAM_BOT_TOKEN: 'token123',
       TELEGRAM_CHAT_ID: '-100123456789',
       GMGN_API_KEY: 'gmgn-key-123',
-    })).toThrow(/RH_RPC_URL/);
-  });
-
-  it('throws on missing RH_WS_URL', () => {
-    expect(() => loadSecrets({
-      RH_RPC_URL: 'https://rpc.example.com',
-      TELEGRAM_BOT_TOKEN: 'token123',
-      TELEGRAM_CHAT_ID: '-100123456789',
-      GMGN_API_KEY: 'gmgn-key-123',
-    })).toThrow(/RH_WS_URL/);
+    });
+    expect(s.rhRpcUrl).toBe('');
+    expect(s.rhWsUrl).toBe('');
   });
 
   it('throws on missing GMGN_API_KEY', () => {

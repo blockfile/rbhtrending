@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { runCycle, type RunCycleDeps, type GmgnLike, type TelegramLike } from '../src/pipeline/runCycle';
 import { Db } from '../src/db/index';
 import { Tracker } from '../src/pipeline/trending';
-import type { AppConfig, ButtonsConfig, FollowUpConfig, GmgnToken, SecurityConfig, TrendingConfig } from '../src/types';
+import type { AppConfig, ButtonsConfig, FollowUpConfig, GmgnToken, TrendingConfig } from '../src/types';
 
 const TRENDING_CFG: TrendingConfig = {
   minLiquidityUsd: 5000,
@@ -14,10 +14,9 @@ const TRENDING_CFG: TrendingConfig = {
   dumpDrawdownPct: 50,
   maxPostsPerCycle: 10,
 };
-const SECURITY_CFG: SecurityConfig = { sellTaxDangerPct: 30, sellTaxWarnPct: 10, topHolderWarnPct: 25 };
 const FOLLOWUP_CFG: FollowUpConfig = { windowMinutes: 120, liveEditSec: 45 };
 const BUTTONS_CFG: ButtonsConfig = { chart: true, scan: true, trade: true };
-const CFG: AppConfig = { trending: TRENDING_CFG, security: SECURITY_CFG, followUp: FOLLOWUP_CFG, buttons: BUTTONS_CFG };
+const CFG: AppConfig = { trending: TRENDING_CFG, followUp: FOLLOWUP_CFG, buttons: BUTTONS_CFG };
 
 function token(overrides: Partial<GmgnToken> = {}): GmgnToken {
   return {

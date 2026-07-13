@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { trends, Tracker, type FollowEvent } from '../src/pipeline/trending';
-import type { PoolActivity, TrendingConfig, FollowUpConfig } from '../src/types';
+import { Tracker, type FollowEvent } from '../src/pipeline/trending';
+import type { TrendingConfig, FollowUpConfig } from '../src/types';
 
 const TRENDING_CFG: TrendingConfig = {
   minLiquidityUsd: 5000,
@@ -16,47 +16,6 @@ const FOLLOWUP_CFG: FollowUpConfig = {
   windowMinutes: 60,
   liveEditSec: 45,
 };
-
-const activity = (overrides: Partial<PoolActivity> = {}): PoolActivity => ({
-  address: 'addr1',
-  symbol: 'COOL',
-  name: 'Cool Token',
-  liquidityUsd: 5000,
-  volume1hUsd: 10000,
-  buyers1h: 30,
-  priceUsd: 1,
-  fdvUsd: 100,
-  poolAddress: 'pool1',
-  createdAt: 0,
-  ...overrides,
-});
-
-describe('trends', () => {
-  it('returns false when liquidity is below the minimum, even with strong volume/buyers', () => {
-    const a = activity({ liquidityUsd: 4999, volume1hUsd: 999999, buyers1h: 999 });
-    expect(trends(a, TRENDING_CFG)).toBe(false);
-  });
-
-  it('returns true when liquidity is ok and volume1h meets the minimum', () => {
-    const a = activity({ liquidityUsd: 5000, volume1hUsd: 10000, buyers1h: 0 });
-    expect(trends(a, TRENDING_CFG)).toBe(true);
-  });
-
-  it('returns true when liquidity is ok and buyers1h meets the minimum', () => {
-    const a = activity({ liquidityUsd: 5000, volume1hUsd: 0, buyers1h: 30 });
-    expect(trends(a, TRENDING_CFG)).toBe(true);
-  });
-
-  it('returns false when liquidity is ok but neither volume nor buyers meet the minimum', () => {
-    const a = activity({ liquidityUsd: 5000, volume1hUsd: 9999, buyers1h: 29 });
-    expect(trends(a, TRENDING_CFG)).toBe(false);
-  });
-
-  it('returns true right at the liquidity boundary with volume also right at boundary', () => {
-    const a = activity({ liquidityUsd: 5000, volume1hUsd: 10000, buyers1h: 0 });
-    expect(trends(a, TRENDING_CFG)).toBe(true);
-  });
-});
 
 describe('Tracker', () => {
   let tracker: Tracker;

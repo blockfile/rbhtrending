@@ -1,23 +1,9 @@
-import type { GmgnToken, PoolActivity, TrendingConfig, FollowUpConfig } from '../types';
+import type { GmgnToken, TrendingConfig, FollowUpConfig } from '../types';
 
 /**
- * Pure trending gate: does this pool's current activity clear the configured
- * thresholds? Liquidity must always clear the floor; either volume or buyer
- * count clearing its own floor is enough on top of that.
- *
- * Kept for the still-live GeckoTerminal-era code paths/tests (Task G3 leaves those modules in
- * place); `passesGate` below is the GMGN-native equivalent used by the current pipeline.
- */
-export function trends(a: PoolActivity, cfg: TrendingConfig): boolean {
-  return (
-    a.liquidityUsd >= cfg.minLiquidityUsd &&
-    (a.volume1hUsd >= cfg.minVolume1hUsd || a.buyers1h >= cfg.minBuyers1h)
-  );
-}
-
-/**
- * GMGN-native trending gate (Task G3): same shape as `trends`, but reads a `GmgnToken`'s
- * `volumeUsd`/`buys` in place of `PoolActivity`'s `volume1hUsd`/`buyers1h`.
+ * Pure trending gate: does this token's current activity clear the configured thresholds?
+ * Liquidity must always clear the floor; either volume or buyer count clearing its own floor
+ * is enough on top of that. GMGN-native (Task G3) — reads a `GmgnToken`'s `volumeUsd`/`buys`.
  */
 export function passesGate(t: GmgnToken, cfg: TrendingConfig): boolean {
   return (
