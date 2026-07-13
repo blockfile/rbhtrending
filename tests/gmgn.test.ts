@@ -106,6 +106,25 @@ describe('mapToken', () => {
     expect(result?.volumeUsd).toBe(0);
     expect(result?.holderCount).toBe(0);
   });
+
+  it('clamps GMGN -1 "unknown" tax/ratio sentinels to 0 (not -100%)', () => {
+    const result = mapToken({ ...FIXTURE, buy_tax: '-1', sell_tax: '-1', lock_percent: -1, dev_team_hold_rate: -1 });
+    expect(result?.buyTaxPct).toBe(0);
+    expect(result?.sellTaxPct).toBe(0);
+    expect(result?.lpLockedPct).toBe(0);
+    expect(result?.devHoldPct).toBe(0);
+  });
+
+  it('parses a real fractional tax (0.03 -> 3%)', () => {
+    const result = mapToken({ ...FIXTURE, buy_tax: '0.03', sell_tax: '0.06' });
+    expect(result?.buyTaxPct).toBeCloseTo(3, 5);
+    expect(result?.sellTaxPct).toBeCloseTo(6, 5);
+  });
+
+  it('falls back to symbol when name is missing/empty', () => {
+    expect(mapToken({ ...FIXTURE, name: undefined })?.name).toBe(FIXTURE.symbol);
+    expect(mapToken({ ...FIXTURE, name: '' })?.name).toBe(FIXTURE.symbol);
+  });
 });
 
 describe('GmgnClient.trending', () => {

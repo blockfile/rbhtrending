@@ -103,7 +103,7 @@ export function formatCard(t: GmgnToken, a: Assessment): string {
 
   lines.push(
     '',
-    `💰 MC: ${usdOrQ(t.marketCapUsd)} • ⇡ ATH ${usdOrQ(t.athMarketCapUsd)}`,
+    `💰 MC: ${usdOrQ(t.marketCapUsd)} • ⇡ ATH ${usdOrQ(Math.max(t.marketCapUsd, t.athMarketCapUsd))}`,
     `💧 Liq: ${usdOrQ(t.liquidityUsd)}`,
     `📊 Vol 1h: ${usdOrQ(t.volumeUsd)} • ${t.swaps} swaps`,
     `👥 Holders: ${t.holderCount} | Buyers: ${t.buys}`,

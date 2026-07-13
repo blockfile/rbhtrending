@@ -12,13 +12,16 @@ function num(v: unknown): number {
  * (e.g. `buy_tax`/`sell_tax`) — parses then scales to a 0..100 percent. */
 function pctFromFractionString(v: unknown): number {
   const n = parseFloat(String(v));
-  return Number.isFinite(n) ? n * 100 : 0;
+  // GMGN sends -1 as an "unknown / not computed" sentinel for taxes — clamp negatives to 0
+  // rather than rendering a nonsensical "-100%" on the card.
+  return Number.isFinite(n) && n > 0 ? n * 100 : 0;
 }
 
-/** A raw 0..1 fraction (already a number) scaled to a 0..100 percent, with a finite guard. */
+/** A raw 0..1 fraction (already a number) scaled to a 0..100 percent, with a finite guard.
+ * Negatives (GMGN's unknown sentinel) clamp to 0. */
 function pctFromFraction(v: unknown): number {
   const n = num(v);
-  return Number.isFinite(n) ? n * 100 : 0;
+  return n > 0 ? n * 100 : 0;
 }
 
 /** Non-empty-string guard used for the optional social/logo fields — GMGN sends `""` (not
@@ -39,7 +42,7 @@ export function mapToken(raw: any): GmgnToken | null {
 
   return {
     address: raw.address,
-    name: raw.name,
+    name: str(raw.name) ?? raw.symbol, // fall back to symbol so recordSeen/escapeHtml never see undefined
     symbol: raw.symbol,
     logo: str(raw.logo),
     priceUsd: num(raw.price),

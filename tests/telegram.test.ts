@@ -130,6 +130,12 @@ describe('formatCard', () => {
     expect(text).not.toContain('⏱');
   });
 
+  it('never shows an ATH below current MC (clamps ATH to >= MC)', () => {
+    const t = { ...TOKEN, marketCapUsd: 530000, athMarketCapUsd: 418000 };
+    const text = formatCard(t, assess(t));
+    expect(text).toContain('💰 MC: $530.0k • ⇡ ATH $530.0k');
+  });
+
   it('renders a honeypot/flagged token with a 🧨 header, an ⚠️ flags line, and honeypot 🧨 in the security line', () => {
     const flagged: GmgnToken = {
       ...TOKEN,
