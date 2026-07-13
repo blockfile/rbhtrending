@@ -146,6 +146,10 @@ export class Evm extends EventEmitter {
     return (result as any[]) ?? [];
   }
 
+  async blockNumber(): Promise<number> {
+    return parseInt((await this.rpcCall('eth_blockNumber', [])) as string, 16);
+  }
+
   private async rpcCall(method: string, params: unknown[]): Promise<unknown> {
     const res = await fetch(this.rpcUrl, {
       method: 'POST',
