@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { Tracker, type FollowEvent } from '../src/pipeline/trending';
-import type { TrendingConfig, FollowUpConfig } from '../src/types';
+import { Tracker, passesGate, type FollowEvent } from '../src/pipeline/trending';
+import type { GmgnToken, TrendingConfig, FollowUpConfig } from '../src/types';
 
 const TRENDING_CFG: TrendingConfig = {
   minLiquidityUsd: 5000,
@@ -11,6 +11,24 @@ const TRENDING_CFG: TrendingConfig = {
   dumpDrawdownPct: 50,
   maxPostsPerCycle: 10,
 };
+
+const gateToken = (over: Partial<GmgnToken> = {}): GmgnToken =>
+  ({ liquidityUsd: 20000, volumeUsd: 50000, buys: 100, honeypot: false, ...over } as GmgnToken);
+
+describe('passesGate', () => {
+  it('passes a liquid, active, non-honeypot token', () => {
+    expect(passesGate(gateToken(), TRENDING_CFG)).toBe(true);
+  });
+  it('hard-filters confirmed honeypots even when liquid + active', () => {
+    expect(passesGate(gateToken({ honeypot: true }), TRENDING_CFG)).toBe(false);
+  });
+  it('fails below the liquidity floor', () => {
+    expect(passesGate(gateToken({ liquidityUsd: 100 }), TRENDING_CFG)).toBe(false);
+  });
+  it('passes on buyers alone when volume is low', () => {
+    expect(passesGate(gateToken({ volumeUsd: 0, buys: 50 }), TRENDING_CFG)).toBe(true);
+  });
+});
 
 const FOLLOWUP_CFG: FollowUpConfig = {
   windowMinutes: 60,
