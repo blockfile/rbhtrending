@@ -1,26 +1,7 @@
 import type { Security, SecurityConfig } from '../types';
-import { SELECTORS, padAddress, encodeUint, encodeCall, decodeAddress, decodeUint } from '../chain/abi';
+import { SELECTORS, padAddress, encodeCall, decodeAddress, decodeUint } from '../chain/abi';
+import { DEAD_ADDRESSES } from '../chain/constants';
 
-/**
- * VERIFIED chain fact (live spike, see docs/superpowers/plans/2026-07-13-robinhood-trending-v1.md):
- * the `.to` of a live swap tx on Robinhood Chain (EVM 4663). Runtime-verified below via
- * factory() + a getAmountsOut round-trip before any dependent call is trusted — if that
- * verification fails (aggregator, wrong address, etc.) the honeypot/tax fields degrade to
- * 'unknown' rather than hard-failing the whole scan.
- */
-export const ROUTER_ADDRESS = '0xccc88a9d1b4ed6b0eaba998850414b24f1c315be';
-
-export const ZERO_ADDRESS = '0x' + '0'.repeat(40);
-export const BURN_ADDRESS = '0x000000000000000000000000000000000000dead';
-/** Addresses treated as "gone forever" for both owner-renounce and LP-burn checks. */
-export const DEAD_ADDRESSES = new Set([ZERO_ADDRESS, BURN_ADDRESS]);
-
-/** Nominal probe amount for the sell simulation / getAmountsOut round-trip. Both calls use
- * the same amountIn, so the exact scale is irrelevant to the resulting tax ratio — it just
- * needs to be non-zero and small enough not to swing an AMM's price materially. */
-const PROBE_AMOUNT_IN = 1_000_000_000n;
-/** Far-future swap deadline — this is a simulated call, never actually mined. */
-const SWAP_DEADLINE = 9_999_999_999n;
 /** Minimum burned-or-locked fraction (dead-address balance / total supply) to call LP burned. */
 const LP_BURN_BAR_NUM = 99n; // ratio >= 99/100, computed in integer math to avoid float drift
 const LP_BURN_BAR_DEN = 100n;
@@ -150,88 +131,13 @@ interface HoneypotTaxResult {
 }
 
 /**
- * Verifies the router candidate (factory() + a getAmountsOut round-trip against the pool's
- * actual quote token), then simulates a sell of a nominal amount impersonating the pool as
- * the seller (the closest thing to "a holder" this scan has without a discovered real
- * holder or state-override support in `SecurityDeps.call`) via
- * swapExactTokensForTokens. On success, honeypot = false and sellTaxPct = the shortfall
- * between the pure-AMM expected output and the simulated actual output.
- *
- * Router-verification failures (unverifiable router, bad path, no liquidity) degrade to
- * 'unknown'. A revert on the *sell* call itself also degrades to 'unknown' rather than
- * honeypot=true: pool-impersonation reverts on ERC-20 allowance for every token (a pair
- * never approves the router to spend its own tokens), so a revert here can't yet be
- * distinguished from a real honeypot — see the INTERIM comment below.
+ * Robinhood Chain has NO standard router exposing getAmountsOut/swapExactTokensForTokens
+ * (live-verified — see src/chain/constants.ts; the old ROUTER_ADDRESS constant this used to
+ * call was wrong and has been deleted). Without a router there is no getAmountsOut round-trip
+ * to verify and no swap call to simulate a sell through, so this always degrades to
+ * 'unknown' rather than trusting a nonexistent contract. A real sell-simulation (reserve-math
+ * quote + real-holder or state-override impersonation) is deferred to Task 6c.
  */
-async function checkHoneypotAndTax(deps: SecurityDeps, tokenAddr: string, poolAddr: string): Promise<HoneypotTaxResult> {
-  const UNKNOWN: HoneypotTaxResult = { honeypot: 'unknown', sellTaxPct: 'unknown' };
-
-  let expectedOut: bigint;
-  let quote: string;
-  try {
-    await deps.call(ROUTER_ADDRESS, encodeCall(SELECTORS.factory));
-
-    const [token0Hex, token1Hex] = await Promise.all([
-      deps.call(poolAddr, encodeCall(SELECTORS.token0)),
-      deps.call(poolAddr, encodeCall(SELECTORS.token1)),
-    ]);
-    const token0 = decodeAddress(token0Hex).toLowerCase();
-    const token1 = decodeAddress(token1Hex).toLowerCase();
-    quote = token0 === tokenAddr.toLowerCase() ? token1 : token0;
-
-    const expectedHex = await deps.call(ROUTER_ADDRESS, encodeGetAmountsOut(tokenAddr, quote));
-    expectedOut = decodeLastAmount(expectedHex);
-    if (expectedOut === 0n) return UNKNOWN;
-  } catch {
-    return UNKNOWN;
-  }
-
-  try {
-    const swapData = encodeSwapExactTokensForTokens(tokenAddr, quote);
-    const actualHex = await deps.call(ROUTER_ADDRESS, swapData, poolAddr);
-    const actualOut = decodeLastAmount(actualHex);
-    const sellTaxPct = actualOut >= expectedOut ? 0 : (Number(expectedOut - actualOut) / Number(expectedOut)) * 100;
-    return { honeypot: false, sellTaxPct };
-  } catch {
-    // INTERIM: pool-impersonation reverts on allowance for all tokens; cannot distinguish
-    // honeypot from structural revert. Rework with real-holder impersonation or eth_call
-    // state-overrides (live-RPC task) before trusting a revert as a honeypot signal.
-    return { honeypot: 'unknown', sellTaxPct: 'unknown' };
-  }
-}
-
-/** getAmountsOut(uint256 amountIn, address[] path) — path = [token, quote]. */
-function encodeGetAmountsOut(token: string, quote: string): string {
-  return encodeCall(
-    SELECTORS.getAmountsOut,
-    encodeUint(PROBE_AMOUNT_IN),
-    encodeUint(64n), // offset to the dynamic `path` array (2 head words = 0x40)
-    encodeUint(2n), // path.length
-    padAddress(token),
-    padAddress(quote),
-  );
-}
-
-/** swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline). */
-function encodeSwapExactTokensForTokens(token: string, quote: string): string {
-  return encodeCall(
-    SELECTORS.swapExactTokensForTokens,
-    encodeUint(PROBE_AMOUNT_IN),
-    encodeUint(0n), // amountOutMin — this is a simulation, not a real trade
-    encodeUint(160n), // offset to `path` (5 head words: amountIn, amountOutMin, offset, to, deadline = 0xa0)
-    padAddress(BURN_ADDRESS), // 'to' — the simulated output is discarded, only the ratio matters
-    encodeUint(SWAP_DEADLINE),
-    encodeUint(2n), // path.length
-    padAddress(token),
-    padAddress(quote),
-  );
-}
-
-/** Both getAmountsOut and swapExactTokensForTokens return `uint256[] amounts`; the figure we
- * want (the final hop's output) is always the array's last word. Reuses decodeUint for the
- * actual number decode — this only slices the substring to hand it off. */
-function decodeLastAmount(hex: string): bigint {
-  const clean = hex.replace(/^0x/, '');
-  if (clean.length < 64) return 0n;
-  return decodeUint(clean.slice(-64));
+async function checkHoneypotAndTax(_deps: SecurityDeps, _tokenAddr: string, _poolAddr: string): Promise<HoneypotTaxResult> {
+  return { honeypot: 'unknown', sellTaxPct: 'unknown' };
 }

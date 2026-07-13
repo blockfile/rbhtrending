@@ -2,13 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   scoreSecurity,
   securityScan,
-  ROUTER_ADDRESS,
-  BURN_ADDRESS,
-  ZERO_ADDRESS,
   type SecurityFields,
   type SecurityDeps,
 } from '../src/checks/security';
 import { SELECTORS, padAddress, encodeUint, encodeCall } from '../src/chain/abi';
+import { ZERO_ADDRESS, DEAD_ADDRESS } from '../src/chain/constants';
 import type { SecurityConfig } from '../src/types';
 
 const CFG: SecurityConfig = { sellTaxDangerPct: 30, sellTaxWarnPct: 10, topHolderWarnPct: 25 };
@@ -123,9 +121,6 @@ function healthyCall(overrides: Partial<Record<string, CallStub>> = {}): CallStu
     if (to === POOL && sel === SELECTORS.token1) return padAddress(QUOTE);
     if (to === POOL && sel === SELECTORS.totalSupply) return '0x' + encodeUint(1000n);
     if (to === POOL && sel === SELECTORS.balanceOf) return '0x' + encodeUint(0n);
-    if (to === ROUTER_ADDRESS && sel === SELECTORS.factory) return padAddress('0x' + '4'.repeat(39) + 'd');
-    if (to === ROUTER_ADDRESS && sel === SELECTORS.getAmountsOut) return amountsReturn(1000n, 950n);
-    if (to === ROUTER_ADDRESS && sel === SELECTORS.swapExactTokensForTokens) return amountsReturn(1000n, 950n);
     throw new Error(`unstubbed call: ${to} ${sel}`);
   };
 }
@@ -148,36 +143,16 @@ describe('securityScan (stubbed deps, no network)', () => {
     expect(result.ownerRenounced).toBe(true);
   });
 
-  it('degrades honeypot/tax to unknown (not true) when the sell simulation call reverts', async () => {
-    // Pool-impersonation reverts on ERC-20 allowance for every token, not just honeypots, so
-    // a revert here can't be trusted as a honeypot signal (see task-6-fix-brief.md).
-    const deps = makeDeps({
-      [`${ROUTER_ADDRESS}:${SELECTORS.swapExactTokensForTokens}`]: async () => { throw new Error('revert'); },
-    });
-    const result = await securityScan(deps, TOKEN, POOL, CFG);
+  it('degrades honeypot/tax to unknown (not true) — this chain has no router to simulate a sell through', async () => {
+    // Live-verified: Robinhood Chain has no standard router (the old ROUTER_ADDRESS constant
+    // was wrong and has been deleted — see src/chain/constants.ts). Without a router there's
+    // no getAmountsOut/swapExactTokensForTokens to call, so honeypot/tax always degrade to
+    // 'unknown' rather than trusting a nonexistent contract (Task 6c will replace this sim).
+    const result = await securityScan(makeDeps(), TOKEN, POOL, CFG);
     expect(result.honeypot).toBe('unknown');
     expect(result.sellTaxPct).toBe('unknown');
     expect(result.riskLevel).not.toBe('danger');
     expect(result.riskLevel).toBe('warn');
-  });
-
-  it('degrades honeypot/tax to unknown (not true) when the router factory() call reverts', async () => {
-    const deps = makeDeps({
-      [`${ROUTER_ADDRESS}:${SELECTORS.factory}`]: async () => { throw new Error('revert'); },
-    });
-    const result = await securityScan(deps, TOKEN, POOL, CFG);
-    expect(result.honeypot).toBe('unknown');
-    expect(result.sellTaxPct).toBe('unknown');
-  });
-
-  it('computes sellTaxPct from expected-vs-actual sell output', async () => {
-    const deps = makeDeps({
-      [SELECTORS.getAmountsOut]: async () => amountsReturn(1000n, 1000n),
-      [SELECTORS.swapExactTokensForTokens]: async () => amountsReturn(1000n, 900n),
-    });
-    const result = await securityScan(deps, TOKEN, POOL, CFG);
-    expect(result.honeypot).toBe(false);
-    expect(result.sellTaxPct).toBe(10);
   });
 
   function balanceOfCalldata(holder: string): string {
@@ -188,7 +163,7 @@ describe('securityScan (stubbed deps, no network)', () => {
     const deps = makeDeps({
       [`${POOL.toLowerCase()}:${SELECTORS.totalSupply}`]: async () => '0x' + encodeUint(1000n),
       [`${POOL.toLowerCase()}:${balanceOfCalldata(ZERO_ADDRESS)}`]: async () => '0x' + encodeUint(990n),
-      [`${POOL.toLowerCase()}:${balanceOfCalldata(BURN_ADDRESS)}`]: async () => '0x' + encodeUint(0n),
+      [`${POOL.toLowerCase()}:${balanceOfCalldata(DEAD_ADDRESS)}`]: async () => '0x' + encodeUint(0n),
     });
     const result = await securityScan(deps, TOKEN, POOL, CFG);
     expect(result.lpBurnedOrLocked).toBe(true);
@@ -198,7 +173,7 @@ describe('securityScan (stubbed deps, no network)', () => {
     const deps = makeDeps({
       [`${POOL.toLowerCase()}:${SELECTORS.totalSupply}`]: async () => '0x' + encodeUint(1000n),
       [`${POOL.toLowerCase()}:${balanceOfCalldata(ZERO_ADDRESS)}`]: async () => '0x' + encodeUint(500n),
-      [`${POOL.toLowerCase()}:${balanceOfCalldata(BURN_ADDRESS)}`]: async () => '0x' + encodeUint(0n),
+      [`${POOL.toLowerCase()}:${balanceOfCalldata(DEAD_ADDRESS)}`]: async () => '0x' + encodeUint(0n),
     });
     const result = await securityScan(deps, TOKEN, POOL, CFG);
     expect(result.lpBurnedOrLocked).toBe('unknown');
