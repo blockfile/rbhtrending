@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { loadConfig, loadSecrets } from '../src/config';
 
 describe('loadConfig', () => {
@@ -39,8 +42,147 @@ describe('loadConfig', () => {
     expect(cfg.trending.milestones).toEqual([2, 5, 10, 25, 50, 100]);
   });
 
-  it('throws on missing numeric fields', () => {
-    expect(() => loadConfig('nonexistent.json')).toThrow();
+  it('throws ENOENT when config file does not exist', () => {
+    expect(() => loadConfig('nonexistent.json')).toThrow(/ENOENT/);
+  });
+
+  it('throws specific error when numeric field is missing (trending.minLiquidityUsd)', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'rbh-'));
+    try {
+      const cfgPath = join(tmpDir, 'config.json');
+      const malformed = {
+        trending: {
+          minVolume1hUsd: 10000,
+          minBuyers1h: 30,
+          pollSeconds: 45,
+          dumpDrawdownPct: 50,
+          milestones: [2, 5, 10, 25, 50, 100],
+        },
+        security: {
+          sellTaxDangerPct: 30,
+          sellTaxWarnPct: 10,
+          topHolderWarnPct: 25,
+        },
+        followUp: {
+          windowMinutes: 120,
+          liveEditSec: 45,
+        },
+        buttons: {
+          chart: true,
+          scan: true,
+          trade: true,
+        },
+      };
+      writeFileSync(cfgPath, JSON.stringify(malformed));
+      expect(() => loadConfig(cfgPath)).toThrow('config.json missing numeric field: trending.minLiquidityUsd');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws specific error when milestones is empty array', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'rbh-'));
+    try {
+      const cfgPath = join(tmpDir, 'config.json');
+      const malformed = {
+        trending: {
+          minLiquidityUsd: 5000,
+          minVolume1hUsd: 10000,
+          minBuyers1h: 30,
+          pollSeconds: 45,
+          dumpDrawdownPct: 50,
+          milestones: [],
+        },
+        security: {
+          sellTaxDangerPct: 30,
+          sellTaxWarnPct: 10,
+          topHolderWarnPct: 25,
+        },
+        followUp: {
+          windowMinutes: 120,
+          liveEditSec: 45,
+        },
+        buttons: {
+          chart: true,
+          scan: true,
+          trade: true,
+        },
+      };
+      writeFileSync(cfgPath, JSON.stringify(malformed));
+      expect(() => loadConfig(cfgPath)).toThrow('config.json missing number array: trending.milestones');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws specific error when milestones contains non-number', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'rbh-'));
+    try {
+      const cfgPath = join(tmpDir, 'config.json');
+      const malformed = {
+        trending: {
+          minLiquidityUsd: 5000,
+          minVolume1hUsd: 10000,
+          minBuyers1h: 30,
+          pollSeconds: 45,
+          dumpDrawdownPct: 50,
+          milestones: [2, 5, 'ten', 25, 50, 100],
+        },
+        security: {
+          sellTaxDangerPct: 30,
+          sellTaxWarnPct: 10,
+          topHolderWarnPct: 25,
+        },
+        followUp: {
+          windowMinutes: 120,
+          liveEditSec: 45,
+        },
+        buttons: {
+          chart: true,
+          scan: true,
+          trade: true,
+        },
+      };
+      writeFileSync(cfgPath, JSON.stringify(malformed));
+      expect(() => loadConfig(cfgPath)).toThrow('config.json missing number array: trending.milestones');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws specific error when buttons.chart is not boolean', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'rbh-'));
+    try {
+      const cfgPath = join(tmpDir, 'config.json');
+      const malformed = {
+        trending: {
+          minLiquidityUsd: 5000,
+          minVolume1hUsd: 10000,
+          minBuyers1h: 30,
+          pollSeconds: 45,
+          dumpDrawdownPct: 50,
+          milestones: [2, 5, 10, 25, 50, 100],
+        },
+        security: {
+          sellTaxDangerPct: 30,
+          sellTaxWarnPct: 10,
+          topHolderWarnPct: 25,
+        },
+        followUp: {
+          windowMinutes: 120,
+          liveEditSec: 45,
+        },
+        buttons: {
+          chart: 'yes',
+          scan: true,
+          trade: true,
+        },
+      };
+      writeFileSync(cfgPath, JSON.stringify(malformed));
+      expect(() => loadConfig(cfgPath)).toThrow('config.json missing buttons config (chart, scan, trade as booleans)');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
