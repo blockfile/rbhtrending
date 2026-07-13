@@ -1,4 +1,5 @@
-import type { ButtonsConfig, TokenCard } from './types';
+import type { ButtonsConfig, GmgnToken } from './types';
+import type { Assessment } from './checks/assess';
 import { log } from './logger';
 
 export function escapeHtml(s: string): string {
@@ -18,30 +19,27 @@ export interface SendResult {
 }
 
 // --- Robinhood Chain link targets ------------------------------------------------------
-// GeckoTerminal network slug 'robinhood' — confirmed live (Task 2).
+// GMGN is a full trading terminal for this chain — Chart and Trade both point there.
 // Blockscout base — confirmed live at robinhoodchain.blockscout.com.
-// Trade -> Dexscreener's pool page (keyed by poolAddress) — confirmed live. The Uniswap
-// hosted-app `chain=robinhood` swap URL this used to point at is unverified/likely dead for
-// chain 4663, so Trade was moved off it; Chart (GeckoTerminal) and Scan (Blockscout) are two
-// other distinct, confirmed-live targets.
+const GMGN_TOKEN_BASE = 'https://gmgn.ai/robinhood/token';
 const BLOCKSCOUT_BASE = 'https://robinhoodchain.blockscout.com';
 
-const WEB_BUTTONS: Record<'chart' | 'scan' | 'trade', { text: string; url: (address: string, poolAddress: string) => string }> = {
-  chart: { text: '📊 Chart', url: (_address, pool) => `https://www.geckoterminal.com/robinhood/pools/${pool}` },
+const WEB_BUTTONS: Record<'chart' | 'scan' | 'trade', { text: string; url: (address: string) => string }> = {
+  chart: { text: '📊 Chart', url: (address) => `${GMGN_TOKEN_BASE}/${address}` },
   scan: { text: '🔍 Scan', url: (address) => `${BLOCKSCOUT_BASE}/token/${address}` },
-  trade: { text: '💱 Trade', url: (_address, pool) => `https://dexscreener.com/robinhood/${pool}` },
+  trade: { text: '💱 Trade', url: (address) => `${GMGN_TOKEN_BASE}/${address}?tab=trade` },
 };
 
 /** Build the inline keyboard for a token: a single Chart / Scan / Trade row, gated by config. */
 export function buildButtons(
-  card: { address: string; poolAddress: string },
+  address: string,
   cfg: ButtonsConfig,
   opts: { include?: Array<'chart' | 'scan' | 'trade'> } = {},
 ): Keyboard {
   const keys = opts.include ?? (['chart', 'scan', 'trade'] as const);
   const row = keys
     .filter((k) => cfg[k])
-    .map((k) => ({ text: WEB_BUTTONS[k].text, url: WEB_BUTTONS[k].url(card.address, card.poolAddress) }));
+    .map((k) => ({ text: WEB_BUTTONS[k].text, url: WEB_BUTTONS[k].url(address) }));
   return row.length ? [row] : [];
 }
 
@@ -54,21 +52,6 @@ function usdOrQ(v: number | 'unknown' | undefined): string {
   if (abs >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
   if (abs >= 1e3) return `$${(v / 1e3).toFixed(1)}k`;
   return `$${v.toFixed(0)}`;
-}
-
-function pctOrQ(v: number | 'unknown' | undefined): string {
-  if (v === undefined || v === 'unknown') return '?';
-  return `${v.toFixed(0)}%`;
-}
-
-function numOrQ(v: number | 'unknown' | undefined): string {
-  if (v === undefined || v === 'unknown') return '?';
-  return `${v}`;
-}
-
-function boolMark(v: boolean | 'unknown' | undefined, whenTrue: string, whenFalse: string): string {
-  if (v === undefined || v === 'unknown') return '?';
-  return v ? whenTrue : whenFalse;
 }
 
 /**
@@ -98,62 +81,40 @@ const SECURITY_EMOJI: Record<'safe' | 'warn' | 'danger' | 'unknown', string> = {
 };
 
 /**
- * Render a TokenCard as the Telegram HTML card body — matches the Solana bot's `formatAlert`
- * layout, adapted to this chain's field set. Any field that is `'unknown'` or absent renders
- * as `?` (or, for the fake-volume segment, is omitted entirely); a missing sub-check never
- * upgrades the displayed security verdict toward "safe". The optional live line, ⚠️ flags
- * line, and ⏱ age segment are each omitted entirely when not applicable, per the reference
- * layout.
+ * Render a `GmgnToken` + its `assess()` verdict as the Telegram HTML card body — the rich
+ * Solana-bot-style layout (Task G2). Every GMGN field is a concrete number/boolean (never
+ * 'unknown'), so unlike the old GeckoTerminal-derived card there's no '?' placeholder handling
+ * here. The ⚠️ flags line and the `| ⏱ age` segment are each omitted entirely when not
+ * applicable (no flags; createdAt is 0/absent), per the reference layout.
  */
-export function formatCard(c: TokenCard): string {
-  const s = c.security;
-  const risk = s?.riskLevel ?? 'unknown';
-  const grade = GRADE[risk];
-  const securityBadge = SECURITY_EMOJI[risk];
+export function formatCard(t: GmgnToken, a: Assessment): string {
+  const grade = GRADE[a.grade];
+  const securityBadge = SECURITY_EMOJI[a.grade];
 
-  // v1 Option-A field set: no honeypot/tax simulation on this chain (no standard router) —
-  // the badge instead reports renounce/LP/verified/transferability.
-  const renounced = boolMark(s?.ownerRenounced, '✅', '❌');
-  const lp = boolMark(s?.lpBurnedOrLocked, '🔒', '❌');
-  const verified = boolMark(s?.verified, '✅', '❌');
-  const transfers = boolMark(s?.transferable, '✅', '❌');
-
-  const scoreStr = typeof c.gtScore === 'number' ? `${c.gtScore}/100` : '?/100';
-  const age = ageStr(c.createdAt, Date.now());
+  const age = ageStr(t.createdAt, Date.now());
   const ageSegment = age ? ` | ⏱ ${age}` : '';
 
-  // Only an explicit `=== false` pushes a flag — 'unknown'/absent never upgrades OR downgrades
-  // via this line; the 🛡 Security line already covers the "we don't know" case with '?'.
-  const flags: string[] = [];
-  if (s?.transferable === false) flags.push("can't sell");
-  if (s?.lpBurnedOrLocked === false) flags.push('LP not locked');
-  if (s?.ownerRenounced === false) flags.push('owner active');
-  if (s?.verified === false) flags.push('unverified');
-
   const lines = [
-    `${grade} <b>$${escapeHtml(c.symbol)}</b> • ${escapeHtml(c.name)}`,
-    `⭐ Score: ${scoreStr}${ageSegment}`,
+    `${grade} <b>$${escapeHtml(t.symbol)}</b> • ${escapeHtml(t.name)}`,
+    `⭐ Score: ${a.score}/100${ageSegment}`,
   ];
 
-  if (c.live) lines.push(`📈 Now: ${usdOrQ(c.live.nowUsd)} • ${c.live.multiple.toFixed(1)}X`);
-  if (flags.length) lines.push(`⚠️ ${flags.map(escapeHtml).join(' · ')}`);
+  if (a.flags.length) lines.push(`⚠️ ${a.flags.map(escapeHtml).join(' · ')}`);
 
-  const fake = c.fakeVolumePct;
   lines.push(
     '',
-    `💰 MC: ${usdOrQ(c.fdvUsd)}`,
-    `💧 Liq: ${usdOrQ(c.liquidityUsd)}`,
-    fake !== undefined && fake !== 'unknown'
-      ? `📊 Vol 1h: ${usdOrQ(c.volume1hUsd)} • 🪙 fake ~${fake.toFixed(0)}%`
-      : `📊 Vol 1h: ${usdOrQ(c.volume1hUsd)}`,
-    `👥 Holders: ${numOrQ(c.holders)} | Buyers: ${numOrQ(c.buyers1h)}`,
+    `💰 MC: ${usdOrQ(t.marketCapUsd)} • ⇡ ATH ${usdOrQ(t.athMarketCapUsd)}`,
+    `💧 Liq: ${usdOrQ(t.liquidityUsd)}`,
+    `📊 Vol 1h: ${usdOrQ(t.volumeUsd)} • ${t.swaps} swaps`,
+    `👥 Holders: ${t.holderCount} | Buyers: ${t.buys}`,
     '',
-    `🛡 Security: ${securityBadge}  renounced ${renounced} · LP ${lp} · verified ${verified} · transfers ${transfers}`,
-    `🏆 Top 10: ${pctOrQ(s?.topHolderPct)}`,
+    `🛡 Security: ${securityBadge}  honeypot ${t.honeypot ? '🧨' : '❌'} · tax ${t.buyTaxPct.toFixed(0)}/${t.sellTaxPct.toFixed(0)}% · LP ${t.lpLockedPct >= 50 ? '🔒' : '🔓'} ${t.lpLockedPct.toFixed(0)}% · renounced ${t.renounced ? '✅' : '❌'} · verified ${t.verified ? '✅' : '❌'}`,
+    `🏆 Top 10: ${t.top10Pct.toFixed(0)}% | 🛠 Dev: ${t.devHoldPct.toFixed(0)}%`,
+    `🧠 Smart money: ${t.smartMoneyCount} · 👑 KOL: ${t.kolCount} · 🔫 Snipers: ${t.sniperCount}`,
     '',
-    `🐦 X ${mark(c.twitter)} | TG ${mark(c.telegram)} | Web ${mark(c.website)}`,
+    `🐦 X ${mark(t.twitter)} | TG ${mark(t.telegram)} | Web ${mark(t.website)}`,
     '',
-    `<code>${c.address}</code>`, // tap to copy — links are the buttons below
+    `<code>${t.address}</code>`, // tap to copy — links are the buttons below
   );
   return lines.join('\n');
 }

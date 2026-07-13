@@ -1,8 +1,9 @@
-import type { AppConfig, PoolActivity, Security, TokenCard } from '../types';
+import type { AppConfig, GmgnToken, PoolActivity, Security, TokenCard } from '../types';
 import { trends, Tracker, type FollowEvent } from './trending';
 import { enrich as defaultEnrich, type EnrichDeps } from './enrich';
 import type { GeckoTokenInfo } from '../sources/geckoterminal';
 import { formatCard, buildButtons, formatFollowUp, type FollowUpData, type Keyboard } from '../telegram';
+import { assess } from '../checks/assess';
 import type { Db } from '../db/index';
 import { log } from '../logger';
 
@@ -205,6 +206,55 @@ async function postFollowUp(deps: RunCycleDeps, data: FollowUpData): Promise<voi
   }
 }
 
+/**
+ * TEMPORARY (Task G2): `formatCard`/`buildButtons` were repointed to the GMGN-sourced
+ * `GmgnToken`/`Assessment` shape, but this pipeline still runs on the GeckoTerminal-era
+ * PoolActivity/TokenCard/enrich stack — Task G3 rewires `postNewTrend` to fetch GmgnToken rows
+ * directly and deletes this adapter. Until then, this maps a TokenCard's overlapping fields
+ * onto a GmgnToken (defaulting fields TokenCard has no source for — swaps, sells, top10Pct/dev
+ * concentration beyond topHolderPct, depth counts — to 0/false) purely so the card keeps
+ * compiling and posting with reasonable values from what data is actually available.
+ */
+function tokenCardToGmgnToken(card: TokenCard): GmgnToken {
+  const s = card.security;
+  const num = (v: number | 'unknown' | undefined): number => (typeof v === 'number' ? v : 0);
+  return {
+    address: card.address,
+    name: card.name,
+    symbol: card.symbol,
+    priceUsd: num(card.priceUsd),
+    priceChange1hPct: 0,
+    volumeUsd: num(card.volume1hUsd),
+    liquidityUsd: num(card.liquidityUsd),
+    marketCapUsd: num(card.fdvUsd),
+    athMarketCapUsd: num(card.athUsd),
+    swaps: 0,
+    buys: num(card.buyers1h),
+    sells: 0,
+    holderCount: num(card.holders),
+    top10Pct: num(s?.topHolderPct),
+    createdAt: card.createdAt,
+    twitter: card.twitter,
+    telegram: card.telegram,
+    website: card.website,
+    honeypot: s?.honeypot === true,
+    buyTaxPct: num(s?.buyTaxPct),
+    sellTaxPct: num(s?.sellTaxPct),
+    renounced: s?.ownerRenounced === true,
+    verified: s?.verified === true,
+    lpLockedPct: s?.lpBurnedOrLocked === true ? 100 : 0,
+    devHoldPct: 0,
+    rugRatioPct: 0,
+    burnPct: 0,
+    smartMoneyCount: 0,
+    kolCount: 0,
+    sniperCount: 0,
+    bundlerRatePct: 0,
+    washTrading: false,
+    hotLevel: 0,
+  };
+}
+
 async function postNewTrend(
   deps: RunCycleDeps,
   enrichImpl: (activity: PoolActivity, deps: EnrichDeps, securityCfg: AppConfig['security']) => Promise<TokenCard>,
@@ -212,8 +262,9 @@ async function postNewTrend(
   now: number,
 ): Promise<void> {
   const card = await enrichImpl(p, { securityScan: deps.securityScan, tokenInfo: deps.tokenInfo }, deps.cfg.security);
-  const body = formatCard(card);
-  const buttons = buildButtons(card, deps.cfg.buttons);
+  const gmgnLike = tokenCardToGmgnToken(card);
+  const body = formatCard(gmgnLike, assess(gmgnLike));
+  const buttons = buildButtons(card.address, deps.cfg.buttons);
 
   let messageId = 0;
   let ok = true;

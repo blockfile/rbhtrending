@@ -3,33 +3,31 @@ import {
   escapeHtml, formatCard, formatFollowUp, buildButtons, Telegram, ageStr,
   type FollowUpData,
 } from '../src/telegram';
-import type { TokenCard, ButtonsConfig } from '../src/types';
+import { assess } from '../src/checks/assess';
+import type { GmgnToken, ButtonsConfig } from '../src/types';
 
 // ---------------------------------------------------------------------------
 // buildButtons
 // ---------------------------------------------------------------------------
 
-const CARD_ADDR = {
-  address: '0xCA00000000000000000000000000000000CAFE',
-  poolAddress: '0xP0000000000000000000000000000000000001',
-};
+const ADDR = '0xCA00000000000000000000000000000000CAFE';
 const BTN_CFG: ButtonsConfig = { chart: true, scan: true, trade: true };
 
 describe('buildButtons', () => {
-  it('builds a single Chart/Scan/Trade row, substituting the token address and pool address', () => {
-    const kb = buildButtons(CARD_ADDR, BTN_CFG);
+  it('builds a single Chart/Scan/Trade row pointing at GMGN (chart/trade) and Blockscout (scan)', () => {
+    const kb = buildButtons(ADDR, BTN_CFG);
     expect(kb).toHaveLength(1);
     expect(kb[0]).toEqual([
-      { text: '📊 Chart', url: `https://www.geckoterminal.com/robinhood/pools/${CARD_ADDR.poolAddress}` },
-      { text: '🔍 Scan', url: `https://robinhoodchain.blockscout.com/token/${CARD_ADDR.address}` },
-      { text: '💱 Trade', url: `https://dexscreener.com/robinhood/${CARD_ADDR.poolAddress}` },
+      { text: '📊 Chart', url: `https://gmgn.ai/robinhood/token/${ADDR}` },
+      { text: '🔍 Scan', url: `https://robinhoodchain.blockscout.com/token/${ADDR}` },
+      { text: '💱 Trade', url: `https://gmgn.ai/robinhood/token/${ADDR}?tab=trade` },
     ]);
   });
 
   it('honors the include whitelist (for follow-ups) and disabled flags', () => {
-    const kb = buildButtons(CARD_ADDR, BTN_CFG, { include: ['chart', 'trade'] });
+    const kb = buildButtons(ADDR, BTN_CFG, { include: ['chart', 'trade'] });
     expect(kb[0].map((b) => b.text)).toEqual(['📊 Chart', '💱 Trade']);
-    const off = buildButtons(CARD_ADDR, { chart: false, scan: false, trade: false });
+    const off = buildButtons(ADDR, { chart: false, scan: false, trade: false });
     expect(off).toEqual([]);
   });
 });
@@ -48,35 +46,40 @@ describe('escapeHtml', () => {
 // formatCard
 // ---------------------------------------------------------------------------
 
-const CARD: TokenCard = {
+const TOKEN: GmgnToken = {
   address: '0xTOKEN000000000000000000000000000000001',
-  symbol: 'HOOD',
   name: 'Cool <Token>',
-  liquidityUsd: 12300,
-  volume1hUsd: 27600,
-  buyers1h: 41,
+  symbol: 'HOOD',
   priceUsd: 0.0042,
-  fdvUsd: 184000,
-  poolAddress: '0xPOOL0000000000000000000000000000000001',
+  priceChange1hPct: 12.3,
+  volumeUsd: 27600,
+  liquidityUsd: 12300,
+  marketCapUsd: 184000,
+  athMarketCapUsd: 240000,
+  swaps: 512,
+  buys: 41,
+  sells: 30,
+  holderCount: 341,
+  top10Pct: 21,
   createdAt: 1752300000000,
-  security: {
-    sellTaxPct: 2,
-    topHolderPct: 21,
-    riskLevel: 'safe',
-    honeypot: false,
-    buyTaxPct: 2,
-    lpBurnedOrLocked: true,
-    ownerRenounced: true,
-    verified: true,
-    transferable: true,
-  },
-  athUsd: 240000,
-  holders: 341,
-  fakeVolumePct: 12,
-  gtScore: 91,
   twitter: 'https://x.com/dev',
   telegram: 'https://t.me/c',
   website: undefined,
+  honeypot: false,
+  buyTaxPct: 0,
+  sellTaxPct: 0,
+  renounced: true,
+  verified: true,
+  lpLockedPct: 95,
+  devHoldPct: 5,
+  rugRatioPct: 0,
+  burnPct: 0,
+  smartMoneyCount: 12,
+  kolCount: 14,
+  sniperCount: 3,
+  bundlerRatePct: 0,
+  washTrading: false,
+  hotLevel: 3,
 };
 
 describe('ageStr', () => {
@@ -103,154 +106,93 @@ describe('ageStr', () => {
 });
 
 describe('formatCard', () => {
-  it('renders the full card with escaped name, score/age, security detail, market data, and tap-copy contract', () => {
-    const text = formatCard(CARD);
+  it('renders the full card: header, score/age, market/security/depth blocks, socials, and tap-copy contract', () => {
+    const a = assess(TOKEN);
+    const text = formatCard(TOKEN, a);
     expect(text).toContain('🔥 <b>$HOOD</b> • Cool &lt;Token&gt;');
-    expect(text).toMatch(/⭐ Score: 91\/100 \| ⏱ \d+[mhd]/);
-    expect(text).toContain('💰 MC: $184.0k');
+    expect(text).toMatch(/⭐ Score: 100\/100 \| ⏱ \d+[mhd]/);
+    expect(text).toContain('💰 MC: $184.0k • ⇡ ATH $240.0k');
     expect(text).toContain('💧 Liq: $12.3k');
-    expect(text).toContain('📊 Vol 1h: $27.6k • 🪙 fake ~12%');
+    expect(text).toContain('📊 Vol 1h: $27.6k • 512 swaps');
     expect(text).toContain('👥 Holders: 341 | Buyers: 41');
-    expect(text).toContain('🛡 Security: ✅  renounced ✅ · LP 🔒 · verified ✅ · transfers ✅');
-    expect(text).toContain('🏆 Top 10: 21%');
+    expect(text).toContain('🛡 Security: ✅  honeypot ❌ · tax 0/0% · LP 🔒 95% · renounced ✅ · verified ✅');
+    expect(text).toContain('🏆 Top 10: 21% | 🛠 Dev: 5%');
+    expect(text).toContain('🧠 Smart money: 12 · 👑 KOL: 14 · 🔫 Snipers: 3');
     expect(text).toContain('🐦 X ✅ | TG ✅ | Web ❌');
     expect(text).toContain('<code>0xTOKEN000000000000000000000000000000001</code>');
-    expect(text).not.toContain('📈 Now:'); // no live line unless c.live is present
-    expect(text).not.toContain('⚠️'); // fully-clean fixture (safe risk, no false sub-fields) — no flags line
-    expect(text).not.toContain('ATH'); // removed entirely — ATH data isn't available (Option-A)
-    expect(text).not.toContain('honeypot');
-    expect(text).not.toContain('not measured');
+    expect(text).not.toContain('⚠️'); // clean fixture — no flags line
   });
 
-  it('renders ⭐ Score: ?/100 when gtScore is absent, with no age segment when createdAt is 0', () => {
-    const text = formatCard({ ...CARD, gtScore: undefined, createdAt: 0 });
-    expect(text).toContain('⭐ Score: ?/100');
+  it('omits the ⏱ age segment when createdAt is 0/absent', () => {
+    const a = assess(TOKEN);
+    const text = formatCard({ ...TOKEN, createdAt: 0 }, a);
+    expect(text).toContain('⭐ Score: 100/100');
     expect(text).not.toContain('⏱');
   });
 
-  it('renders 🏆 Top 10: ? when security.topHolderPct is unknown/absent (line is never hidden)', () => {
-    const unknown = formatCard({ ...CARD, security: { ...CARD.security!, topHolderPct: 'unknown' } });
-    expect(unknown).toContain('🏆 Top 10: ?');
-
-    const noSecurity = formatCard({ ...CARD, security: undefined });
-    expect(noSecurity).toContain('🏆 Top 10: ?');
+  it('renders a honeypot/flagged token with a 🧨 header, an ⚠️ flags line, and honeypot 🧨 in the security line', () => {
+    const flagged: GmgnToken = {
+      ...TOKEN,
+      honeypot: true,
+      sellTaxPct: 15,
+      lpLockedPct: 30,
+      renounced: false,
+      verified: false,
+      top10Pct: 60,
+      devHoldPct: 20,
+      washTrading: true,
+    };
+    const a = assess(flagged);
+    expect(a.grade).toBe('danger');
+    const text = formatCard(flagged, a);
+    expect(text.startsWith('🧨')).toBe(true);
+    expect(text).toContain(`⚠️ ${a.flags.join(' · ')}`);
+    expect(text).toContain('honeypot 🧨');
+    expect(text).toContain('🛡 Security: 🧨');
   });
 
-  it('renders the live Now line only when c.live is present', () => {
-    const withLive = formatCard({ ...CARD, live: { nowUsd: 48200, multiple: 3.1 } });
-    expect(withLive).toContain('📈 Now: $48.2k • 3.1X');
-    expect(formatCard(CARD)).not.toContain('📈 Now:');
+  it('renders a warn-grade token (a single non-danger flag) with an ⚠️ header and matching flags line', () => {
+    const warnToken: GmgnToken = { ...TOKEN, devHoldPct: 20 }; // only "dev holds 20%" — not a danger condition
+    const a = assess(warnToken);
+    expect(a.grade).toBe('warn');
+    const text = formatCard(warnToken, a);
+    expect(text.startsWith('⚠️')).toBe(true);
+    expect(text).toContain('⚠️ dev holds 20%');
+    expect(text).toContain('🛡 Security: ⚠️');
+  });
+
+  it('shows no ⚠️ flags line for a fully clean token', () => {
+    expect(formatCard(TOKEN, assess(TOKEN))).not.toContain('⚠️');
+  });
+
+  it('renders the LP lock emoji 🔒 at/above 50% and 🔓 below it', () => {
+    expect(formatCard(TOKEN, assess(TOKEN))).toContain('LP 🔒 95%');
+    const unlocked = { ...TOKEN, lpLockedPct: 30 };
+    expect(formatCard(unlocked, assess(unlocked))).toContain('LP 🔓 30%');
+  });
+
+  it('marks honeypot ❌ when false and 🧨 when true in the security line', () => {
+    expect(formatCard(TOKEN, assess(TOKEN))).toContain('honeypot ❌');
+    const hp = { ...TOKEN, honeypot: true };
+    expect(formatCard(hp, assess(hp))).toContain('honeypot 🧨');
   });
 
   it('abbreviates large USD values with M/B suffixes', () => {
-    const big = formatCard({ ...CARD, fdvUsd: 156176100, liquidityUsd: 10527600 });
-    expect(big).toContain('💰 MC: $156.2M');
-    expect(big).toContain('💧 Liq: $10.5M');
-    const huge = formatCard({ ...CARD, fdvUsd: 2_400_000_000 });
-    expect(huge).toContain('💰 MC: $2.4B');
-  });
-
-  it('picks the grade emoji and security badge from the four risk tiers', () => {
-    const safe = formatCard({ ...CARD, security: { ...CARD.security!, riskLevel: 'safe' } });
-    expect(safe.startsWith('🔥')).toBe(true);
-    expect(safe).toContain('🛡 Security: ✅');
-
-    const warn = formatCard({ ...CARD, security: { ...CARD.security!, riskLevel: 'warn' } });
-    expect(warn.startsWith('⚠️')).toBe(true);
-    expect(warn).toContain('🛡 Security: ⚠️  renounced');
-
-    const danger = formatCard({ ...CARD, security: { ...CARD.security!, riskLevel: 'danger' } });
-    expect(danger.startsWith('🧨')).toBe(true);
-    expect(danger).toContain('🛡 Security: 🧨');
-
-    const unknown = formatCard({ ...CARD, security: { ...CARD.security!, riskLevel: 'unknown' } });
-    expect(unknown).toContain('🛡 Security: ❓');
-  });
-
-  it('treats an unknown/missing risk level as ❓ and never upgrades toward safe', () => {
-    const unknownRisk = formatCard({ ...CARD, security: { ...CARD.security!, riskLevel: 'unknown' } });
-    expect(unknownRisk.startsWith('⚠️')).toBe(true);
-    expect(unknownRisk).toContain('🛡 Security: ❓');
-
-    const noSecurity = formatCard({ ...CARD, security: undefined });
-    expect(noSecurity.startsWith('⚠️')).toBe(true);
-    expect(noSecurity).toContain('🛡 Security: ❓');
-  });
-
-  it('renders unknown/absent security sub-fields as ?, with no honeypot text, and Top 10/flags left un-triggered by "unknown"', () => {
-    const text = formatCard({
-      ...CARD,
-      security: { sellTaxPct: 'unknown', topHolderPct: 'unknown', riskLevel: 'warn' },
-    });
-    expect(text).toContain('🛡 Security: ⚠️  renounced ? · LP ? · verified ? · transfers ?');
-    expect(text).not.toContain('honeypot');
-    expect(text).not.toContain('⚠️ can'); // 'unknown' sub-fields never trigger a flag (only explicit === false does)
-  });
-
-  it('renders LP/verified/transfers/renounced as ❌ (not the old ⚠️) when explicitly false, and lists all four as flags', () => {
-    const text = formatCard({
-      ...CARD,
-      security: {
-        ...CARD.security!,
-        lpBurnedOrLocked: false,
-        verified: false,
-        transferable: false,
-        ownerRenounced: false,
-        riskLevel: 'danger',
-      },
-    });
-    expect(text).toContain('🛡 Security: 🧨  renounced ❌ · LP ❌ · verified ❌ · transfers ❌');
-    expect(text).not.toContain('honeypot');
-    expect(text).toContain("⚠️ can't sell · LP not locked · owner active · unverified");
-  });
-
-  it('shows no ⚠️ flags line when every security sub-field is true (fully clean)', () => {
-    const text = formatCard({
-      ...CARD,
-      security: {
-        ...CARD.security!,
-        lpBurnedOrLocked: true,
-        verified: true,
-        transferable: true,
-        ownerRenounced: true,
-        riskLevel: 'safe',
-      },
-    });
-    expect(text).not.toContain('⚠️');
-  });
-
-  it('renders unknown/absent display fields as ? (MC, Liq, Vol, Holders, Buyers) and never shows ATH', () => {
-    const text = formatCard({
-      ...CARD,
-      fdvUsd: 'unknown', athUsd: 'unknown', liquidityUsd: 'unknown',
-      volume1hUsd: 'unknown', holders: 'unknown', buyers1h: 'unknown',
-    });
-    expect(text).toContain('💰 MC: ?');
-    expect(text).toContain('💧 Liq: ?');
-    expect(text).toContain('📊 Vol 1h: ?');
-    expect(text).toContain('👥 Holders: ? | Buyers: ?');
-    expect(text).not.toContain('ATH');
-  });
-
-  it('omits the fake-volume segment when fakeVolumePct is unknown or absent, shows it when known', () => {
-    const unknown = formatCard({ ...CARD, fakeVolumePct: 'unknown' });
-    expect(unknown).toContain('📊 Vol 1h: $27.6k');
-    expect(unknown).not.toContain('fake');
-
-    const absent = formatCard({ ...CARD, fakeVolumePct: undefined });
-    expect(absent).not.toContain('fake');
-
-    const known = formatCard({ ...CARD, fakeVolumePct: 5 });
-    expect(known).toContain('📊 Vol 1h: $27.6k • 🪙 fake ~5%');
+    const big = { ...TOKEN, marketCapUsd: 156176100, liquidityUsd: 10527600 };
+    const bigText = formatCard(big, assess(big));
+    expect(bigText).toContain('💰 MC: $156.2M');
+    expect(bigText).toContain('💧 Liq: $10.5M');
+    const huge = { ...TOKEN, marketCapUsd: 2_400_000_000 };
+    expect(formatCard(huge, assess(huge))).toContain('💰 MC: $2.4B');
   });
 
   it('marks socials ❌ when absent', () => {
-    const text = formatCard({ ...CARD, twitter: undefined, telegram: undefined, website: 'https://hood.fun' });
-    expect(text).toContain('🐦 X ❌ | TG ❌ | Web ✅');
+    const noSocials = { ...TOKEN, twitter: undefined, telegram: undefined, website: 'https://hood.fun' };
+    expect(formatCard(noSocials, assess(noSocials))).toContain('🐦 X ❌ | TG ❌ | Web ✅');
   });
 
-  it('places blank lines exactly around the MC/Liq/Vol/Holders block, the Top-10 block, and before the contract', () => {
-    const lines = formatCard(CARD).split('\n');
+  it('places blank lines exactly around the market block, the security/depth block, and before the socials/contract lines', () => {
+    const lines = formatCard(TOKEN, assess(TOKEN)).split('\n');
     const mcIdx = lines.findIndex((l) => l.startsWith('💰 MC:'));
     const secIdx = lines.findIndex((l) => l.startsWith('🛡 Security:'));
     const socialIdx = lines.findIndex((l) => l.startsWith('🐦 X'));
