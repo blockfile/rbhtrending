@@ -87,11 +87,6 @@ export function ageStr(createdAt: number, now: number): string | undefined {
   return `${Math.floor(minutes / 1440)}d`;
 }
 
-/** ✅/❌ presence mark for optional social links (absent = ❌, not '?' — these are truly optional, not fetch failures). */
-function mark(v: string | undefined): string {
-  return v ? '✅' : '❌';
-}
-
 const GRADE: Record<'safe' | 'warn' | 'danger' | 'unknown', string> = {
   safe: '🔥', warn: '⚠️', danger: '🧨', unknown: '⚠️',
 };
@@ -100,40 +95,53 @@ const SECURITY_EMOJI: Record<'safe' | 'warn' | 'danger' | 'unknown', string> = {
 };
 
 /**
- * Render a `GmgnToken` + its `assess()` verdict as the Telegram HTML card body — the rich
- * Solana-bot-style layout (Task G2). Every GMGN field is a concrete number/boolean (never
- * 'unknown'), so unlike the old GeckoTerminal-derived card there's no '?' placeholder handling
- * here. The ⚠️ flags line and the `| ⏱ age` segment are each omitted entirely when not
- * applicable (no flags; createdAt is 0/absent), per the reference layout.
+ * Render a `GmgnToken` + its `assess()` verdict as the Telegram HTML card body, arranged like
+ * the Solana "Early Trending" reference cards: header + Age/Security/score line + social links,
+ * then market / holder-distribution / security blocks with └├ tree connectors. Every GMGN field
+ * is a concrete number/boolean (never 'unknown'), so there's no '?' placeholder handling here.
+ * The ⚠️ flags line (under the links) and the `Age:` segment are each omitted entirely when not
+ * applicable (no flags; createdAt is 0/absent).
  */
 export function formatCard(t: GmgnToken, a: Assessment): string {
   const grade = GRADE[a.grade];
   const securityBadge = SECURITY_EMOJI[a.grade];
 
   const age = ageStr(t.createdAt, Date.now());
-  const ageSegment = age ? ` | ⏱ ${age}` : '';
+  const statusLine = age
+    ? `🕐 Age: ${age} | Security: ${securityBadge} | ⭐ ${a.score}/100`
+    : `🛡 Security: ${securityBadge} | ⭐ ${a.score}/100`;
+
+  const links: string[] = [];
+  if (t.twitter) links.push(`<a href="${escapeHtml(t.twitter)}">X</a>`);
+  if (t.telegram) links.push(`<a href="${escapeHtml(t.telegram)}">TG</a>`);
+  if (t.website) links.push(`<a href="${escapeHtml(t.website)}">WEB</a>`);
+  links.push(`<a href="${GMGN_TOKEN_BASE}/${t.address}">CHART</a>`);
 
   const lines = [
-    `${grade} <b>$${escapeHtml(t.symbol)}</b> • ${escapeHtml(t.name)}`,
-    `⭐ Score: ${a.score}/100${ageSegment}`,
+    `${grade} <b>$${escapeHtml(t.symbol)}</b> • ${escapeHtml(t.name)} — New Trending`,
+    statusLine,
+    `🔗 ${links.join(' • ')}`,
   ];
 
   if (a.flags.length) lines.push(`⚠️ ${a.flags.map(escapeHtml).join(' · ')}`);
 
   lines.push(
     '',
-    `💰 MC: ${usdOrQ(t.marketCapUsd)} • ⇡ ATH ${usdOrQ(Math.max(t.marketCapUsd, t.athMarketCapUsd))}`,
+    `💰 MC: ${usdOrQ(t.marketCapUsd)} • 🔝 ATH: ${usdOrQ(Math.max(t.marketCapUsd, t.athMarketCapUsd))}`,
     `💧 Liq: ${usdOrQ(t.liquidityUsd)}`,
-    `📊 Vol 1h: ${usdOrQ(t.volumeUsd)} • ${t.swaps} swaps`,
-    `👥 Holders: ${t.holderCount} | Buyers: ${t.buys}`,
+    `📈 Vol 1h: ${usdOrQ(t.volumeUsd)}`,
+    `└ Swaps: ${t.swaps} | Buys: ${t.buys}`,
+    `👥 Holders: ${t.holderCount}`,
     '',
-    `🛡 Security: ${securityBadge}  honeypot ${t.honeypot ? '🧨' : '❌'} · tax ${t.buyTaxPct.toFixed(0)}/${t.sellTaxPct.toFixed(0)}% · LP ${t.lpLockedPct >= 50 ? '🔒' : '🔓'} ${t.lpLockedPct.toFixed(0)}% · renounced ${t.renounced ? '✅' : '❌'} · verified ${t.verified ? '✅' : '❌'}`,
-    `🏆 Top 10: ${t.top10Pct.toFixed(0)}% | 🛠 Dev: ${t.devHoldPct.toFixed(0)}%`,
-    `🧠 Smart money: ${t.smartMoneyCount} · 👑 KOL: ${t.kolCount} · 🔫 Snipers: ${t.sniperCount}`,
+    `🎯 Top 10: ${t.top10Pct.toFixed(0)}% | 🛠 Dev: ${t.devHoldPct.toFixed(0)}%`,
+    `├ 📦 Bundled: ${t.bundlerRatePct.toFixed(0)}% | 🐍 Snipers: ${t.sniperCount}`,
+    `├ 🤖 Bots: ${t.botDegenPct.toFixed(0)}% | 🐀 Insiders: ${t.ratTraderPct.toFixed(0)}%`,
+    `└ 🧠 Smart: ${t.smartMoneyCount} | 👑 KOL: ${t.kolCount}`,
     '',
-    `🐦 X ${mark(t.twitter)} | TG ${mark(t.telegram)} | Web ${mark(t.website)}`,
+    `🛡 Honeypot ${t.honeypot ? '🧨' : '❌'} | Tax ${t.buyTaxPct.toFixed(0)}/${t.sellTaxPct.toFixed(0)}%`,
+    `└ LP ${t.lpLockedPct >= 50 ? '🔒' : '🔓'} ${t.lpLockedPct.toFixed(0)}% | Renounced ${t.renounced ? '✅' : '❌'} | Verified ${t.verified ? '✅' : '❌'}`,
     '',
-    `<code>${t.address}</code>`, // tap to copy — links are the buttons below
+    `<code>${t.address}</code>`, // tap to copy on desktop — the 📋 Copy CA button covers mobile
   );
   return lines.join('\n');
 }

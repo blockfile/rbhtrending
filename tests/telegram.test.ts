@@ -128,38 +128,58 @@ describe('ageStr', () => {
 });
 
 describe('formatCard', () => {
-  it('renders the full card: header, score/age, market/security/depth blocks, socials, and tap-copy contract', () => {
+  it('renders the full card: header, age/security/score line, links, market/distribution/security blocks, and tap-copy contract', () => {
     const a = assess(TOKEN);
     const text = formatCard(TOKEN, a);
-    expect(text).toContain('🔥 <b>$HOOD</b> • Cool &lt;Token&gt;');
+    expect(text).toContain('🔥 <b>$HOOD</b> • Cool &lt;Token&gt; — New Trending');
     // 88 baseline -1 top10(21%) -2 dev(5%) -1 snipers(3) +4 smart(12) +3 KOL(14) = 91
-    expect(text).toMatch(/⭐ Score: 91\/100 \| ⏱ \d+[mhd]/);
-    expect(text).toContain('💰 MC: $184.0k • ⇡ ATH $240.0k');
+    expect(text).toMatch(/🕐 Age: \d+[mhd] \| Security: ✅ \| ⭐ 91\/100/);
+    expect(text).toContain(
+      '🔗 <a href="https://x.com/dev">X</a> • <a href="https://t.me/c">TG</a>'
+      + ' • <a href="https://gmgn.ai/robinhood/token/0xTOKEN000000000000000000000000000000001">CHART</a>',
+    );
+    expect(text).toContain('💰 MC: $184.0k • 🔝 ATH: $240.0k');
     expect(text).toContain('💧 Liq: $12.3k');
-    expect(text).toContain('📊 Vol 1h: $27.6k • 512 swaps');
-    expect(text).toContain('👥 Holders: 341 | Buyers: 41');
-    expect(text).toContain('🛡 Security: ✅  honeypot ❌ · tax 0/0% · LP 🔒 95% · renounced ✅ · verified ✅');
-    expect(text).toContain('🏆 Top 10: 21% | 🛠 Dev: 5%');
-    expect(text).toContain('🧠 Smart money: 12 · 👑 KOL: 14 · 🔫 Snipers: 3');
-    expect(text).toContain('🐦 X ✅ | TG ✅ | Web ❌');
+    expect(text).toContain('📈 Vol 1h: $27.6k');
+    expect(text).toContain('└ Swaps: 512 | Buys: 41');
+    expect(text).toContain('👥 Holders: 341');
+    expect(text).toContain('🎯 Top 10: 21% | 🛠 Dev: 5%');
+    expect(text).toContain('├ 📦 Bundled: 0% | 🐍 Snipers: 3');
+    expect(text).toContain('├ 🤖 Bots: 15% | 🐀 Insiders: 0%');
+    expect(text).toContain('└ 🧠 Smart: 12 | 👑 KOL: 14');
+    expect(text).toContain('🛡 Honeypot ❌ | Tax 0/0%');
+    expect(text).toContain('└ LP 🔒 95% | Renounced ✅ | Verified ✅');
     expect(text).toContain('<code>0xTOKEN000000000000000000000000000000001</code>');
     expect(text).not.toContain('⚠️'); // clean fixture — no flags line
   });
 
-  it('omits the ⏱ age segment when createdAt is 0/absent', () => {
+  it('drops the Age segment (keeping Security and score) when createdAt is 0/absent', () => {
     const a = assess(TOKEN);
     const text = formatCard({ ...TOKEN, createdAt: 0 }, a);
-    expect(text).toContain('⭐ Score: 91/100');
-    expect(text).not.toContain('⏱');
+    expect(text).toContain('🛡 Security: ✅ | ⭐ 91/100');
+    expect(text).not.toContain('Age:');
+  });
+
+  it('links only the socials that exist (CHART is always last)', () => {
+    const webOnly = { ...TOKEN, twitter: undefined, telegram: undefined, website: 'https://hood.fun' };
+    const text = formatCard(webOnly, assess(webOnly));
+    expect(text).toContain(
+      '🔗 <a href="https://hood.fun">WEB</a>'
+      + ' • <a href="https://gmgn.ai/robinhood/token/0xTOKEN000000000000000000000000000000001">CHART</a>',
+    );
+    const none = { ...TOKEN, twitter: undefined, telegram: undefined, website: undefined };
+    expect(formatCard(none, assess(none))).toContain(
+      '🔗 <a href="https://gmgn.ai/robinhood/token/0xTOKEN000000000000000000000000000000001">CHART</a>',
+    );
   });
 
   it('never shows an ATH below current MC (clamps ATH to >= MC)', () => {
     const t = { ...TOKEN, marketCapUsd: 530000, athMarketCapUsd: 418000 };
     const text = formatCard(t, assess(t));
-    expect(text).toContain('💰 MC: $530.0k • ⇡ ATH $530.0k');
+    expect(text).toContain('💰 MC: $530.0k • 🔝 ATH: $530.0k');
   });
 
-  it('renders a honeypot/flagged token with a 🧨 header, an ⚠️ flags line, and honeypot 🧨 in the security line', () => {
+  it('renders a honeypot/flagged token with a 🧨 header, an ⚠️ flags line under the links, and Honeypot 🧨', () => {
     const flagged: GmgnToken = {
       ...TOKEN,
       honeypot: true,
@@ -176,8 +196,11 @@ describe('formatCard', () => {
     const text = formatCard(flagged, a);
     expect(text.startsWith('🧨')).toBe(true);
     expect(text).toContain(`⚠️ ${a.flags.join(' · ')}`);
-    expect(text).toContain('honeypot 🧨');
-    expect(text).toContain('🛡 Security: 🧨');
+    expect(text).toContain('Security: 🧨');
+    expect(text).toContain('🛡 Honeypot 🧨 | Tax 0/15%');
+    // the flags line sits directly under the links line, before the market block
+    const lines = text.split('\n');
+    expect(lines.findIndex((l) => l.startsWith('⚠️'))).toBe(lines.findIndex((l) => l.startsWith('🔗')) + 1);
   });
 
   it('renders a warn-grade token (a single non-danger flag) with an ⚠️ header and matching flags line', () => {
@@ -187,7 +210,7 @@ describe('formatCard', () => {
     const text = formatCard(warnToken, a);
     expect(text.startsWith('⚠️')).toBe(true);
     expect(text).toContain('⚠️ dev holds 20%');
-    expect(text).toContain('🛡 Security: ⚠️');
+    expect(text).toContain('Security: ⚠️');
   });
 
   it('shows no ⚠️ flags line for a fully clean token', () => {
@@ -200,12 +223,6 @@ describe('formatCard', () => {
     expect(formatCard(unlocked, assess(unlocked))).toContain('LP 🔓 30%');
   });
 
-  it('marks honeypot ❌ when false and 🧨 when true in the security line', () => {
-    expect(formatCard(TOKEN, assess(TOKEN))).toContain('honeypot ❌');
-    const hp = { ...TOKEN, honeypot: true };
-    expect(formatCard(hp, assess(hp))).toContain('honeypot 🧨');
-  });
-
   it('abbreviates large USD values with M/B suffixes', () => {
     const big = { ...TOKEN, marketCapUsd: 156176100, liquidityUsd: 10527600 };
     const bigText = formatCard(big, assess(big));
@@ -215,20 +232,15 @@ describe('formatCard', () => {
     expect(formatCard(huge, assess(huge))).toContain('💰 MC: $2.4B');
   });
 
-  it('marks socials ❌ when absent', () => {
-    const noSocials = { ...TOKEN, twitter: undefined, telegram: undefined, website: 'https://hood.fun' };
-    expect(formatCard(noSocials, assess(noSocials))).toContain('🐦 X ❌ | TG ❌ | Web ✅');
-  });
-
-  it('places blank lines exactly around the market block, the security/depth block, and before the socials/contract lines', () => {
+  it('places blank lines exactly before the market, distribution, and security blocks and the contract line', () => {
     const lines = formatCard(TOKEN, assess(TOKEN)).split('\n');
     const mcIdx = lines.findIndex((l) => l.startsWith('💰 MC:'));
-    const secIdx = lines.findIndex((l) => l.startsWith('🛡 Security:'));
-    const socialIdx = lines.findIndex((l) => l.startsWith('🐦 X'));
+    const distIdx = lines.findIndex((l) => l.startsWith('🎯 Top 10:'));
+    const secIdx = lines.findIndex((l) => l.startsWith('🛡 Honeypot'));
     const codeIdx = lines.findIndex((l) => l.startsWith('<code>'));
     expect(lines[mcIdx - 1]).toBe('');
+    expect(lines[distIdx - 1]).toBe('');
     expect(lines[secIdx - 1]).toBe('');
-    expect(lines[socialIdx - 1]).toBe('');
     expect(lines[codeIdx - 1]).toBe('');
   });
 });
