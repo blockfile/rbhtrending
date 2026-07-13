@@ -165,6 +165,8 @@ describe('runCycle', () => {
 
     expect(sends).toHaveLength(2);
     expect(sends[1].text).toContain('2X');
+    // follow-ups carry the same token image as the original alert card
+    expect(sends[1].photoUrl).toBe('https://images.weserv.nl/?url=https%3A%2F%2Fexample.com%2Flogo.png');
   });
 
   it('produces a "dump" follow-up send when a tracked token falls hard off its peak', async () => {
@@ -182,6 +184,7 @@ describe('runCycle', () => {
     await runCycle(baseDeps({ gmgn: gmgn([dumped]) }), 3000);
     expect(sends).toHaveLength(3);
     expect(sends[2].text.toLowerCase()).toContain('dump');
+    expect(sends[2].photoUrl).toBe('https://images.weserv.nl/?url=https%3A%2F%2Fexample.com%2Flogo.png');
   });
 
   it('--dry mode sends nothing to telegram but still records seen and marks the token tracked', async () => {

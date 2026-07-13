@@ -115,7 +115,7 @@ async function processTrackedToken(deps: RunCycleDeps, t: GmgnToken, now: number
     // have changed in the same call that produced a dump (dump requires current < peak).
     const after = deps.tracker.get(t.address);
     const peak = after?.peakMcUsd ?? before?.peakMcUsd ?? baseline;
-    await postFollowUp(deps, buildFollowUpData(ev, t, baseline, peak));
+    await postFollowUp(deps, buildFollowUpData(ev, t, baseline, peak), t);
   }
 }
 
@@ -128,14 +128,15 @@ function buildFollowUpData(ev: FollowEvent, t: GmgnToken, baseline: number, peak
   return { kind: ev.kind, symbol: t.symbol, address: t.address, peakUsd: peak, nowUsd: t.marketCapUsd, peakPct, nowPct };
 }
 
-async function postFollowUp(deps: RunCycleDeps, data: FollowUpData): Promise<void> {
+async function postFollowUp(deps: RunCycleDeps, data: FollowUpData, t: GmgnToken): Promise<void> {
   try {
     const text = formatFollowUp(data);
     if (deps.dry) {
       log('info', '[DRY] follow-up:\n' + text);
       return;
     }
-    const r = await deps.telegram.send({ text });
+    // same token image as the original alert card (photoUrl failure falls back to plain text)
+    const r = await deps.telegram.send({ text, photoUrl: tokenImageUrl(t.address, t.logo) });
     if (!r.ok) log('warn', `runCycle: follow-up send failed for ${data.address}`);
   } catch (err) {
     log('warn', `runCycle: follow-up send threw for ${data.address}: ${(err as Error).message}`);

@@ -28,7 +28,8 @@ GMGN openapi market/rank poll (chain=robinhood, interval=1h, limit=100)
         │  (copy_text — reliable tap-to-copy on mobile, unlike the <code> address)
         ▼
    Tracker follow-ups (pipeline/trending.ts)
-        up-Nx milestone alerts + dump-drawdown alerts, driven by the same polled market-cap reads
+        up-Nx milestone alerts + dump-drawdown alerts, driven by the same polled market-cap
+        reads — sent with the same token photo as the original card
 ```
 
 **GMGN is the only data source.** There is no GeckoTerminal call and no on-chain RPC/EVM scanning
