@@ -16,11 +16,12 @@ export async function recentHolders(evm: Evm, token: string): Promise<string[]> 
   try {
     const tip = await evm.blockNumber();
     const from = Math.max(0, tip - LOG_RANGE_BLOCKS);
+    const toBlock = '0x' + tip.toString(16);
     const logs = await evm.getLogs({
       address: token,
       topics: [TRANSFER_TOPIC],
       fromBlock: '0x' + from.toString(16),
-      toBlock: 'latest',
+      toBlock,
     });
 
     // Transfer(address indexed from, address indexed to, uint256 value) -> recipient is topics[2].

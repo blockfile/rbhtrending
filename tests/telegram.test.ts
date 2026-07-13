@@ -22,7 +22,7 @@ describe('buildButtons', () => {
     expect(kb[0]).toEqual([
       { text: '📊 Chart', url: `https://www.geckoterminal.com/robinhood/pools/${CARD_ADDR.poolAddress}` },
       { text: '🔍 Scan', url: `https://robinhoodchain.blockscout.com/token/${CARD_ADDR.address}` },
-      { text: '💱 Trade', url: `https://app.uniswap.org/swap?chain=robinhood&outputCurrency=${CARD_ADDR.address}` },
+      { text: '💱 Trade', url: `https://dexscreener.com/robinhood/${CARD_ADDR.poolAddress}` },
     ]);
   });
 

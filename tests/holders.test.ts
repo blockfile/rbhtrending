@@ -42,7 +42,7 @@ describe('recentHolders', () => {
     expect(capturedFilter.address).toBe(TOKEN);
     expect(capturedFilter.topics).toEqual([TRANSFER_TOPIC]);
     expect(capturedFilter.fromBlock).toBe('0x' + (1_000_000 - 9500).toString(16));
-    expect(capturedFilter.toBlock).toBe('latest');
+    expect(capturedFilter.toBlock).toBe('0x' + (1_000_000).toString(16));
   });
 
   it('clamps fromBlock to 0 when the chain tip is below the range window', async () => {

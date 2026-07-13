@@ -20,14 +20,16 @@ export interface SendResult {
 // --- Robinhood Chain link targets ------------------------------------------------------
 // GeckoTerminal network slug 'robinhood' — confirmed live (Task 2).
 // Blockscout base — confirmed live at robinhoodchain.blockscout.com.
-// Uniswap `chain=robinhood` slug — inferred by convention (GeckoTerminal uses the same
-// slug); spot-check against a real swap link before go-live, same as Task 5's constants.
+// Trade -> Dexscreener's pool page (keyed by poolAddress) — confirmed live. The Uniswap
+// hosted-app `chain=robinhood` swap URL this used to point at is unverified/likely dead for
+// chain 4663, so Trade was moved off it; Chart (GeckoTerminal) and Scan (Blockscout) are two
+// other distinct, confirmed-live targets.
 const BLOCKSCOUT_BASE = 'https://robinhoodchain.blockscout.com';
 
 const WEB_BUTTONS: Record<'chart' | 'scan' | 'trade', { text: string; url: (address: string, poolAddress: string) => string }> = {
   chart: { text: '📊 Chart', url: (_address, pool) => `https://www.geckoterminal.com/robinhood/pools/${pool}` },
   scan: { text: '🔍 Scan', url: (address) => `${BLOCKSCOUT_BASE}/token/${address}` },
-  trade: { text: '💱 Trade', url: (address) => `https://app.uniswap.org/swap?chain=robinhood&outputCurrency=${address}` },
+  trade: { text: '💱 Trade', url: (_address, pool) => `https://dexscreener.com/robinhood/${pool}` },
 };
 
 /** Build the inline keyboard for a token: a single Chart / Scan / Trade row, gated by config. */

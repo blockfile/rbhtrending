@@ -161,12 +161,19 @@ const TRANSFERABLE_MAX_CANDIDATES = 5;
 
 /**
  * v1 Option-A transferability probe (Task 6c): with no router to simulate a sell through,
- * this impersonates a real recent holder and eth_calls a self-send of half their own balance
- * to DEAD_ADDRESS. No allowance is needed — `h` already owns the tokens — so a revert here
- * means the token can't be moved even by its own holder, a hard honeypot signal that doesn't
- * depend on a router existing. Best-effort: degrades to 'unknown' whenever the candidate list
- * is empty, every candidate has a zero balance, or anything unexpected goes wrong — it NEVER
- * throws.
+ * this impersonates a real recent holder and eth_calls a self-send of a tiny fixed amount
+ * (1 base unit — never trips an anti-whale max-tx limit on a legit token) to DEAD_ADDRESS. No
+ * allowance is needed — `h` already owns the tokens — so a decoded on-chain revert here means
+ * the token can't be moved even by its own holder, a hard honeypot signal that doesn't depend
+ * on a router existing.
+ *
+ * Critical distinction (this is what keeps a flaky RPC from falsely stamping a healthy token
+ * 🧨 DANGER): only a DECODED REVERT or an explicit false-return is a definitive "not
+ * transferable" signal. A thrown TRANSPORT error (timeout, HTTP 500, rate-limit, network) says
+ * nothing about the token itself, so it must never resolve to `false` — the loop just moves on
+ * to the next candidate holder instead of concluding anything. Best-effort: degrades to
+ * 'unknown' whenever the candidate list is empty, every candidate has a zero balance, or every
+ * attempt hits a transport error (no definitive success/revert) — it NEVER throws.
  */
 async function checkTransferable(
   deps: SecurityDeps,
@@ -180,17 +187,32 @@ async function checkTransferable(
     const candidates = holders.filter((h) => !skip.has(h.toLowerCase())).slice(0, TRANSFERABLE_MAX_CANDIDATES);
 
     for (const h of candidates) {
-      const bal = decodeUint(await deps.call(tokenAddr, encodeCall(SELECTORS.balanceOf, padAddress(h))));
+      let bal: bigint;
+      try {
+        bal = decodeUint(await deps.call(tokenAddr, encodeCall(SELECTORS.balanceOf, padAddress(h))));
+      } catch {
+        continue; // can't confirm this candidate actually holds tokens — try the next one
+      }
       if (bal === 0n) continue;
 
-      const half = bal / 2n;
-      const amt = half === 0n ? bal : half;
+      const amt = 1n; // tiny fixed probe amount — never trips a max-tx / anti-whale revert
       const data = encodeCall(SELECTORS.transfer, padAddress(DEAD_ADDRESS), encodeUint(amt));
       try {
-        await deps.call(tokenAddr, data, h);
-        return true;
-      } catch {
-        return false;
+        const ret = await deps.call(tokenAddr, data, h);
+        const clean = (ret || '0x').replace(/^0x/, '');
+        // Empty return data (legacy ERC-20s that don't return a bool) or an explicit true-word
+        // both prove the token actually moved for a real holder — definitive "transferable".
+        if (clean === '' || decodeUint(ret) === 1n) return true;
+        // An explicit false-word: the transfer ran but reported failure — definitive "blocked".
+        if (decodeUint(ret) === 0n) return false;
+        // Any other decoded value isn't a clean boolean signal — inconclusive, try next holder.
+        continue;
+      } catch (e) {
+        // A real decoded on-chain revert is a hard "transfers are blocked" honeypot signal.
+        if (/execution reverted|revert/i.test((e as Error).message)) return false;
+        // Anything else is a transport failure — it says nothing about the token, so we must
+        // NOT conclude false and falsely DANGER a healthy token. Try the next candidate.
+        continue;
       }
     }
     return 'unknown';

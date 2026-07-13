@@ -65,11 +65,28 @@ async function tick(now: number): Promise<void> {
 
 let interval: NodeJS.Timeout | undefined;
 
+// Re-entrancy guard: a slow cycle (many sequential enrich RPC calls) can exceed `pollSeconds`,
+// so setInterval would otherwise overlap ticks and the same not-yet-recorded pool could get
+// posted twice. Skip a tick entirely rather than let two run concurrently.
+let running = false;
+async function guardedTick(now: number): Promise<void> {
+  if (running) {
+    log('info', 'skipping tick — previous cycle still running');
+    return;
+  }
+  running = true;
+  try {
+    await tick(now);
+  } finally {
+    running = false;
+  }
+}
+
 async function main(): Promise<void> {
   log('info', `Robinhood Trending Bot starting${dry ? ' (DRY RUN — no Telegram sends)' : ''}`);
-  await tick(Date.now());
+  await guardedTick(Date.now());
   interval = setInterval(() => {
-    void tick(Date.now());
+    void guardedTick(Date.now());
   }, cfg.trending.pollSeconds * 1000);
 }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { isVerified } from '../src/checks/blockscout';
 
 describe('isVerified', () => {
@@ -61,9 +61,21 @@ describe('isVerified', () => {
   });
 
   it('uses global fetch when fetchFn is not provided', async () => {
-    // This test verifies that the function doesn't crash when called without fetchFn
-    // In a real scenario, this would hit the network, but we're just checking the signature
-    expect(true).toBe(true);
+    const originalFetch = globalThis.fetch;
+    const mockFetch = vi.fn(async (_url: string, _opts?: RequestInit) =>
+      new Response(JSON.stringify({ address: '0xabc' }), { status: 200 }),
+    );
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+    try {
+      const result = await isVerified('0xabc', 'https://example.blockscout.com');
+      expect(result).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://example.blockscout.com/api/v2/smart-contracts/0xabc',
+        expect.objectContaining({ headers: { accept: 'application/json' } }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('never throws, even when everything fails', async () => {

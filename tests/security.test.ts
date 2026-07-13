@@ -233,15 +233,33 @@ describe('securityScan (stubbed deps, no network)', () => {
 
 describe('securityScan — transferability probe (Option-A)', () => {
   const HOLDER = '0x' + '4'.repeat(39) + 'd';
+  const HOLDER2 = '0x' + '5'.repeat(39) + 'e';
 
   function balanceOfCalldata(holder: string): string {
     return encodeCall(SELECTORS.balanceOf, padAddress(holder));
   }
 
-  it('resolves transferable=true when a real holder can self-send half their balance', async () => {
+  function fundedBalance(holder: string, bal = 1000n): Partial<Record<string, CallStub>> {
+    return { [`${TOKEN.toLowerCase()}:${balanceOfCalldata(holder)}`]: async () => '0x' + encodeUint(bal) };
+  }
+
+  it('resolves transferable=true when the self-send returns 0x (no return data on success)', async () => {
     const deps = makeDeps(
       {
-        [`${TOKEN.toLowerCase()}:${balanceOfCalldata(HOLDER)}`]: async () => '0x' + encodeUint(1000n),
+        ...fundedBalance(HOLDER),
+        [`${TOKEN.toLowerCase()}:${SELECTORS.transfer}`]: async () => '0x',
+      },
+      undefined,
+      async () => [HOLDER],
+    );
+    const result = await securityScan(deps, TOKEN, POOL, CFG);
+    expect(result.transferable).toBe(true);
+  });
+
+  it('resolves transferable=true when the self-send returns a true-word (1)', async () => {
+    const deps = makeDeps(
+      {
+        ...fundedBalance(HOLDER),
         [`${TOKEN.toLowerCase()}:${SELECTORS.transfer}`]: async () => '0x' + encodeUint(1n),
       },
       undefined,
@@ -251,11 +269,11 @@ describe('securityScan — transferability probe (Option-A)', () => {
     expect(result.transferable).toBe(true);
   });
 
-  it('resolves transferable=false when the self-send reverts (hard honeypot signal) and scores danger', async () => {
+  it('resolves transferable=false when the self-send returns a false-word (0) — definitively not transferable', async () => {
     const deps = makeDeps(
       {
-        [`${TOKEN.toLowerCase()}:${balanceOfCalldata(HOLDER)}`]: async () => '0x' + encodeUint(1000n),
-        [`${TOKEN.toLowerCase()}:${SELECTORS.transfer}`]: async () => { throw new Error('revert'); },
+        ...fundedBalance(HOLDER),
+        [`${TOKEN.toLowerCase()}:${SELECTORS.transfer}`]: async () => '0x' + encodeUint(0n),
       },
       undefined,
       async () => [HOLDER],
@@ -263,6 +281,90 @@ describe('securityScan — transferability probe (Option-A)', () => {
     const result = await securityScan(deps, TOKEN, POOL, CFG);
     expect(result.transferable).toBe(false);
     expect(result.riskLevel).toBe('danger');
+  });
+
+  it('resolves transferable=false when the self-send reverts on-chain (hard honeypot signal) and scores danger', async () => {
+    const deps = makeDeps(
+      {
+        ...fundedBalance(HOLDER),
+        [`${TOKEN.toLowerCase()}:${SELECTORS.transfer}`]: async () => {
+          throw new Error('execution reverted: TRANSFER_BLOCKED');
+        },
+      },
+      undefined,
+      async () => [HOLDER],
+    );
+    const result = await securityScan(deps, TOKEN, POOL, CFG);
+    expect(result.transferable).toBe(false);
+    expect(result.riskLevel).toBe('danger');
+  });
+
+  it('leaves transferable unknown (NOT false) when the only funded holder hits a transport error — must never falsely DANGER a healthy token', async () => {
+    const deps = makeDeps(
+      {
+        ...fundedBalance(HOLDER),
+        [`${TOKEN.toLowerCase()}:${SELECTORS.transfer}`]: async () => {
+          throw new Error('RPC HTTP error: 500');
+        },
+      },
+      undefined,
+      async () => [HOLDER],
+    );
+    const result = await securityScan(deps, TOKEN, POOL, CFG);
+    expect(result.transferable).toBe('unknown');
+    expect(result.riskLevel).not.toBe('danger');
+  });
+
+  it('leaves transferable unknown when the only funded holder hits a network transport error (fetch failed)', async () => {
+    const deps = makeDeps(
+      {
+        ...fundedBalance(HOLDER),
+        [`${TOKEN.toLowerCase()}:${SELECTORS.transfer}`]: async () => {
+          throw new Error('fetch failed');
+        },
+      },
+      undefined,
+      async () => [HOLDER],
+    );
+    const result = await securityScan(deps, TOKEN, POOL, CFG);
+    expect(result.transferable).toBe('unknown');
+  });
+
+  it('does not stop at the first holder on a transport error — tries the next candidate and resolves true', async () => {
+    let transferCalls = 0;
+    const deps = makeDeps(
+      {
+        ...fundedBalance(HOLDER),
+        ...fundedBalance(HOLDER2),
+        [`${TOKEN.toLowerCase()}:${SELECTORS.transfer}`]: async (_to, _data, from) => {
+          transferCalls++;
+          if (from?.toLowerCase() === HOLDER.toLowerCase()) throw new Error('RPC HTTP error: 500');
+          return '0x' + encodeUint(1n);
+        },
+      },
+      undefined,
+      async () => [HOLDER, HOLDER2],
+    );
+    const result = await securityScan(deps, TOKEN, POOL, CFG);
+    expect(result.transferable).toBe(true);
+    expect(transferCalls).toBe(2);
+  });
+
+  it('probes a tiny fixed amount (1n), not half the holder balance', async () => {
+    let capturedData = '';
+    const deps = makeDeps(
+      {
+        ...fundedBalance(HOLDER, 1000n),
+        [`${TOKEN.toLowerCase()}:${SELECTORS.transfer}`]: async (_to, data) => {
+          capturedData = data;
+          return '0x' + encodeUint(1n);
+        },
+      },
+      undefined,
+      async () => [HOLDER],
+    );
+    await securityScan(deps, TOKEN, POOL, CFG);
+    expect(capturedData).toBe(encodeCall(SELECTORS.transfer, padAddress(DEAD_ADDRESS), encodeUint(1n)));
   });
 
   it('leaves transferable unknown when recentHolders resolves an empty list', async () => {
