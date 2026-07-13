@@ -14,21 +14,22 @@ const ADDR = '0xCA00000000000000000000000000000000CAFE';
 const BTN_CFG: ButtonsConfig = { chart: true, scan: true, trade: true };
 
 describe('buildButtons', () => {
-  it('builds a single Chart/Scan/Trade row pointing at GMGN (chart/trade) and Blockscout (scan)', () => {
+  it('builds a Chart/Scan/Trade row plus a Copy-CA row (copy_text works on mobile where tapping <code> may not)', () => {
     const kb = buildButtons(ADDR, BTN_CFG);
-    expect(kb).toHaveLength(1);
+    expect(kb).toHaveLength(2);
     expect(kb[0]).toEqual([
       { text: '📊 Chart', url: `https://gmgn.ai/robinhood/token/${ADDR}` },
       { text: '🔍 Scan', url: `https://robinhoodchain.blockscout.com/token/${ADDR}` },
       { text: '💱 Trade', url: `https://gmgn.ai/robinhood/token/${ADDR}?tab=trade` },
     ]);
+    expect(kb[1]).toEqual([{ text: '📋 Copy CA', copy_text: { text: ADDR } }]);
   });
 
   it('honors the include whitelist (for follow-ups) and disabled flags', () => {
     const kb = buildButtons(ADDR, BTN_CFG, { include: ['chart', 'trade'] });
     expect(kb[0].map((b) => b.text)).toEqual(['📊 Chart', '💱 Trade']);
     const off = buildButtons(ADDR, { chart: false, scan: false, trade: false });
-    expect(off).toEqual([]);
+    expect(off).toEqual([[{ text: '📋 Copy CA', copy_text: { text: ADDR } }]]); // copy row survives alone
   });
 });
 
@@ -37,7 +38,13 @@ describe('buildButtons', () => {
 // ---------------------------------------------------------------------------
 
 describe('tokenImageUrl', () => {
-  it('builds the DexScreener token-image CDN URL with a lowercased address', () => {
+  it('proxies the GMGN logo through weserv when a logo is present (GMGN 403s Telegram, weserv passes)', () => {
+    expect(tokenImageUrl(ADDR, 'https://gmgn.ai/external-res/abc_v2.webp')).toBe(
+      'https://images.weserv.nl/?url=https%3A%2F%2Fgmgn.ai%2Fexternal-res%2Fabc_v2.webp',
+    );
+  });
+
+  it('falls back to the DexScreener token-image CDN (lowercased address) when there is no logo', () => {
     expect(tokenImageUrl(ADDR)).toBe(
       'https://dd.dexscreener.com/ds-data/tokens/robinhood/0xca00000000000000000000000000000000cafe.png',
     );

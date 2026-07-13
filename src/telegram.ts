@@ -6,10 +6,9 @@ export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export interface InlineButton {
-  text: string;
-  url: string;
-}
+export type InlineButton =
+  | { text: string; url: string }
+  | { text: string; copy_text: { text: string } }; // Bot API 7.11+ tap-to-copy button
 export type Keyboard = InlineButton[][];
 
 export interface SendResult {
@@ -26,12 +25,17 @@ const BLOCKSCOUT_BASE = 'https://robinhoodchain.blockscout.com';
 
 // GMGN's own logo URLs (gmgn.ai/external-res/…) sit behind a Cloudflare JS challenge that 403s
 // every non-browser client — including Telegram's server-side sendPhoto fetcher — so cards sent
-// with them always degrade to text. DexScreener hosts the same tokens' images on a public CDN.
+// with them directly always degrade to text. The weserv.nl image proxy DOES get through that
+// challenge, and GMGN sends a logo for essentially every row, so it's the primary source.
+// DexScreener's public CDN covers logo-less rows, but misses many young (<6h) tokens — the ones
+// most likely to alert — which is why it's only the fallback.
+const WESERV_PROXY = 'https://images.weserv.nl/';
 const DEXSCREENER_IMG_BASE = 'https://dd.dexscreener.com/ds-data/tokens/robinhood';
 
-/** Public CDN image URL for a token's card photo. Not every token has a DexScreener image
- * (404 → Telegram.send's existing text fallback), but unlike the GMGN logo it CAN succeed. */
-export function tokenImageUrl(address: string): string {
+/** Card-photo URL Telegram can actually fetch: weserv-proxied GMGN logo when the row has one,
+ * else the DexScreener CDN image. Either can still 404 → Telegram.send's existing text fallback. */
+export function tokenImageUrl(address: string, logo?: string): string {
+  if (logo) return `${WESERV_PROXY}?url=${encodeURIComponent(logo)}`;
   return `${DEXSCREENER_IMG_BASE}/${address.toLowerCase()}.png`;
 }
 
@@ -41,7 +45,9 @@ const WEB_BUTTONS: Record<'chart' | 'scan' | 'trade', { text: string; url: (addr
   trade: { text: '💱 Trade', url: (address) => `${GMGN_TOKEN_BASE}/${address}?tab=trade` },
 };
 
-/** Build the inline keyboard for a token: a single Chart / Scan / Trade row, gated by config. */
+/** Build the inline keyboard for a token: a Chart / Scan / Trade row gated by config, plus an
+ * always-on Copy-CA row — a `copy_text` button copies on tap in every official client, where
+ * tapping the card's `<code>` address does not reliably copy on mobile. */
 export function buildButtons(
   address: string,
   cfg: ButtonsConfig,
@@ -51,7 +57,9 @@ export function buildButtons(
   const row = keys
     .filter((k) => cfg[k])
     .map((k) => ({ text: WEB_BUTTONS[k].text, url: WEB_BUTTONS[k].url(address) }));
-  return row.length ? [row] : [];
+  const rows: Keyboard = row.length ? [row] : [];
+  rows.push([{ text: '📋 Copy CA', copy_text: { text: address } }]);
+  return rows;
 }
 
 // --- Card formatting ---------------------------------------------------------------------

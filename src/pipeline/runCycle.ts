@@ -149,9 +149,9 @@ async function postNewTrend(deps: RunCycleDeps, t: GmgnToken, now: number): Prom
 
   if (deps.dry) {
     log('info', '[DRY] would post:\n' + body);
-    log('info', `[DRY] image: ${tokenImageUrl(t.address)}`);
+    log('info', `[DRY] image: ${tokenImageUrl(t.address, t.logo)}`);
   } else {
-    const r = await deps.telegram.send({ text: body, photoUrl: tokenImageUrl(t.address), buttons });
+    const r = await deps.telegram.send({ text: body, photoUrl: tokenImageUrl(t.address, t.logo), buttons });
     if (!r.ok) {
       log('warn', `runCycle: telegram send failed for ${t.symbol} (${t.address})`);
       return; // not marked tracked — a failed send is retried next cycle since it was never posted

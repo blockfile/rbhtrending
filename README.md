@@ -22,8 +22,10 @@ GMGN openapi market/rank poll (chain=robinhood, interval=1h, limit=100)
         │  score 0-100, grade safe/warn/danger, red-flag list — all derived from the GMGN row
         ▼
    Telegram card (telegram.ts → formatCard) → post
-        │  card photo = DexScreener CDN (dd.dexscreener.com) — GMGN's own logo URLs 403
-        │  (Cloudflare challenge) for Telegram's fetcher; a missing CDN image falls back to text
+        │  card photo = GMGN logo proxied via images.weserv.nl (gmgn.ai itself 403s Telegram's
+        │  fetcher behind a Cloudflare challenge), else the DexScreener CDN; a failed image
+        │  falls back to a text-only post. Buttons: Chart/Scan/Trade row + 📋 Copy CA
+        │  (copy_text — reliable tap-to-copy on mobile, unlike the <code> address)
         ▼
    Tracker follow-ups (pipeline/trending.ts)
         up-Nx milestone alerts + dump-drawdown alerts, driven by the same polled market-cap reads
@@ -145,7 +147,7 @@ leftover from before the on-chain WS listener was removed; don't read it as a li
    | `trending.maxPostsPerCycle` | cap on brand-new posts sent in one poll cycle |
    | `followUp.windowMinutes` | how long a posted token stays tracked for follow-ups before its tracking window expires |
    | `followUp.liveEditSec` | reserved cadence for the (not-yet-wired) live-edit ticker — see Roadmap |
-   | `buttons.chart` / `scan` / `trade` | toggle each inline button on the card |
+   | `buttons.chart` / `scan` / `trade` | toggle each inline button on the card (the 📋 Copy CA button is always on) |
 
 ## Running
 
