@@ -193,12 +193,14 @@ describe('loadSecrets', () => {
       RH_WS_URL: 'wss://ws.example.com',
       TELEGRAM_BOT_TOKEN: 'token123',
       TELEGRAM_CHAT_ID: '-100123456789',
+      GMGN_API_KEY: 'gmgn-key-123',
     });
     expect(s.rhRpcUrl).toBe('https://rpc.example.com');
     expect(s.rhWsUrl).toBe('wss://ws.example.com');
     expect(s.telegramBotToken).toBe('token123');
     expect(s.telegramChatId).toBe('-100123456789');
     expect(s.geckoTerminalApiKey).toBe(''); // optional — empty when unset
+    expect(s.gmgnApiKey).toBe('gmgn-key-123');
   });
 
   it('passes through the optional GeckoTerminal API key', () => {
@@ -208,12 +210,13 @@ describe('loadSecrets', () => {
       TELEGRAM_BOT_TOKEN: 'token123',
       TELEGRAM_CHAT_ID: '-100123456789',
       GECKOTERMINAL_API_KEY: 'gt-key-123',
+      GMGN_API_KEY: 'gmgn-key-123',
     });
     expect(s.geckoTerminalApiKey).toBe('gt-key-123');
   });
 
   it('throws naming every missing required var', () => {
-    expect(() => loadSecrets({})).toThrow(/RH_RPC_URL.*RH_WS_URL.*TELEGRAM_BOT_TOKEN.*TELEGRAM_CHAT_ID/s);
+    expect(() => loadSecrets({})).toThrow(/RH_RPC_URL.*RH_WS_URL.*TELEGRAM_BOT_TOKEN.*TELEGRAM_CHAT_ID.*GMGN_API_KEY/s);
   });
 
   it('throws on missing RH_RPC_URL', () => {
@@ -221,6 +224,7 @@ describe('loadSecrets', () => {
       RH_WS_URL: 'wss://ws.example.com',
       TELEGRAM_BOT_TOKEN: 'token123',
       TELEGRAM_CHAT_ID: '-100123456789',
+      GMGN_API_KEY: 'gmgn-key-123',
     })).toThrow(/RH_RPC_URL/);
   });
 
@@ -229,6 +233,16 @@ describe('loadSecrets', () => {
       RH_RPC_URL: 'https://rpc.example.com',
       TELEGRAM_BOT_TOKEN: 'token123',
       TELEGRAM_CHAT_ID: '-100123456789',
+      GMGN_API_KEY: 'gmgn-key-123',
     })).toThrow(/RH_WS_URL/);
+  });
+
+  it('throws on missing GMGN_API_KEY', () => {
+    expect(() => loadSecrets({
+      RH_RPC_URL: 'https://rpc.example.com',
+      RH_WS_URL: 'wss://ws.example.com',
+      TELEGRAM_BOT_TOKEN: 'token123',
+      TELEGRAM_CHAT_ID: '-100123456789',
+    })).toThrow(/GMGN_API_KEY/);
   });
 });

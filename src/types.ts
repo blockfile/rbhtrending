@@ -102,4 +102,51 @@ export interface Secrets {
   geckoTerminalApiKey: string;
   telegramBotToken: string;
   telegramChatId: string;
+  gmgnApiKey: string;
+}
+
+/**
+ * Full per-token data from a single GMGN `market/rank` row (Task G1). Replaces the
+ * GeckoTerminal-derived PoolActivity/TokenCard/Security trio for the data GMGN can provide
+ * directly — price/mc/liq/vol, holders, top-10 concentration, ATH, honeypot/tax/renounced/
+ * LP-lock/verified security flags, and smart-money/KOL/sniper depth counts. The old types are
+ * left in place until a later task retires GeckoTerminal + on-chain scanning.
+ */
+export interface GmgnToken {
+  address: string;
+  name: string;
+  symbol: string;
+  logo?: string;
+  priceUsd: number;
+  priceChange1hPct: number;
+  volumeUsd: number;
+  liquidityUsd: number;
+  marketCapUsd: number;
+  athMarketCapUsd: number;
+  swaps: number;
+  buys: number;
+  sells: number;
+  holderCount: number;
+  top10Pct: number;
+  createdAt: number;
+  twitter?: string;
+  telegram?: string;
+  website?: string;
+  // security
+  honeypot: boolean;
+  buyTaxPct: number;
+  sellTaxPct: number;
+  renounced: boolean;
+  verified: boolean;
+  lpLockedPct: number;
+  devHoldPct: number;
+  rugRatioPct: number;
+  burnPct: number;
+  // depth / social proof
+  smartMoneyCount: number;
+  kolCount: number;
+  sniperCount: number;
+  bundlerRatePct: number;
+  washTrading: boolean;
+  hotLevel: number;
 }

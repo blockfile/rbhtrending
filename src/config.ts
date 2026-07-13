@@ -50,6 +50,7 @@ export function loadSecrets(env: Record<string, string | undefined> = process.en
     telegramBotToken: get('TELEGRAM_BOT_TOKEN'),
     telegramChatId: get('TELEGRAM_CHAT_ID'),
     geckoTerminalApiKey: env['GECKOTERMINAL_API_KEY'] ?? '', // optional
+    gmgnApiKey: get('GMGN_API_KEY'),
   };
 
   if (missing.length) {
