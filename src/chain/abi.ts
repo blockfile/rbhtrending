@@ -13,6 +13,9 @@ export const SELECTORS = {
   totalSupply: '0x18160ddd',
   getAmountsOut: '0xd06ca61f',
   factory: '0xc45a0155',
+  // swapExactTokensForTokens(uint256,uint256,address[],address,uint256) — used to simulate a
+  // sell through the verified router (Task 6 honeypot/tax check).
+  swapExactTokensForTokens: '0x38ed1739',
 } as const;
 
 /** Left-pads a 20-byte address into a 32-byte ABI word: '0x' + 24 zero-nibbles + 40 lowercase hex chars. */

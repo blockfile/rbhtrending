@@ -13,6 +13,7 @@ describe('SELECTORS', () => {
     expect(SELECTORS.totalSupply).toBe('0x18160ddd');
     expect(SELECTORS.getAmountsOut).toBe('0xd06ca61f');
     expect(SELECTORS.factory).toBe('0xc45a0155');
+    expect(SELECTORS.swapExactTokensForTokens).toBe('0x38ed1739');
   });
 });
 

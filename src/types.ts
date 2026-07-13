@@ -22,6 +22,9 @@ export interface Security {
   buyTaxPct?: number | 'unknown';
   lpBurnedOrLocked?: boolean | 'unknown';
   ownerRenounced?: boolean | 'unknown';
+  // Blockscout verified-source flag (Task 6's securityScan). Same degrade rule as the rest of
+  // this block: absent/'unknown' never upgrades the displayed verdict toward "safe".
+  verified?: boolean | 'unknown';
 }
 
 export interface TokenCard {
