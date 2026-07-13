@@ -267,7 +267,7 @@ describe('GeckoTerminal', () => {
     expect(result[0]?.symbol).toBe('NEW');
   });
 
-  it('includes Authorization header if apiKey is provided', async () => {
+  it('includes the CoinGecko demo-key header if apiKey is provided', async () => {
     let capturedHeaders: HeadersInit | undefined;
     const mockFetch = async (url: string, opts?: RequestInit) => {
       capturedHeaders = opts?.headers;
@@ -281,12 +281,12 @@ describe('GeckoTerminal', () => {
     await client.trendingPools();
     expect(capturedHeaders).toEqual(
       expect.objectContaining({
-        Authorization: 'test-key-123',
+        'x-cg-demo-api-key': 'test-key-123',
       })
     );
   });
 
-  it('does not include Authorization header if apiKey is not provided', async () => {
+  it('does not include the demo-key header if apiKey is not provided', async () => {
     let capturedHeaders: HeadersInit | undefined;
     const mockFetch = async (url: string, opts?: RequestInit) => {
       capturedHeaders = opts?.headers;
@@ -296,7 +296,7 @@ describe('GeckoTerminal', () => {
     const client = new GeckoTerminal({ fetchFn: mockFetch as any });
     await client.trendingPools();
     if (capturedHeaders && typeof capturedHeaders === 'object') {
-      expect('Authorization' in capturedHeaders).toBe(false);
+      expect('x-cg-demo-api-key' in capturedHeaders).toBe(false);
     }
   });
 

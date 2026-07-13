@@ -166,7 +166,10 @@ export class GeckoTerminal {
     };
 
     if (this.apiKey) {
-      headers['Authorization'] = this.apiKey;
+      // CoinGecko Demo key header (verified live). NOT 'Authorization' — GeckoTerminal ignores
+      // that, silently falling back to the shared anonymous rate limit (causes intermittent 429s
+      // that leave a token's one-and-only post sparse). x-cg-demo-api-key authenticates the key.
+      headers['x-cg-demo-api-key'] = this.apiKey;
     }
 
     let lastError: Error | null = null;
