@@ -1,14 +1,9 @@
 import { loadConfig, loadSecrets } from './config';
 import type { AppConfig } from './types';
 import { Db } from './db/index';
-import { GeckoTerminal } from './sources/geckoterminal';
-import { Evm } from './chain/evm';
+import { GmgnClient } from './sources/gmgn';
 import { Telegram } from './telegram';
 import { Tracker } from './pipeline/trending';
-import { securityScan } from './checks/security';
-import { isVerified } from './checks/blockscout';
-import { recentHolders } from './chain/holders';
-import { EXPLORER_BASE } from './chain/constants';
 import { log } from './logger';
 import { runCycle, type RunCycleDeps } from './pipeline/runCycle';
 
@@ -22,35 +17,20 @@ const secrets = loadSecrets();
 const dbPath = (cfg as AppConfig & { dbPath?: string }).dbPath ?? 'data/robinhood.db';
 
 const db = new Db(dbPath);
-const gecko = new GeckoTerminal({ apiKey: secrets.geckoTerminalApiKey });
-const evm = new Evm(secrets.rhRpcUrl, secrets.rhWsUrl);
+const gmgn = new GmgnClient(secrets.gmgnApiKey);
 const telegram = new Telegram(secrets.telegramBotToken, secrets.telegramChatId);
 const tracker = new Tracker(cfg.trending, cfg.followUp);
 
-// v1 discovery is POLL-based via GeckoTerminal (trendingPools/newPools) — `evm` is used only
-// for the eth_call/eth_getLogs security probes below. We deliberately do NOT call
-// evm.connect(): the WS PairCreated listener is a v1.1 feature (see task-10-brief.md).
-// Live-caption editing of the originally posted card is also deferred to v1.1 — v1 delivers
-// the original trending card plus separate follow-up posts only.
-const securityScanDep = (token: string, pool: string) =>
-  securityScan(
-    {
-      call: (to, data, from) => evm.call(to, data, from),
-      isVerified: (addr) => isVerified(addr, EXPLORER_BASE),
-      recentHolders: (t) => recentHolders(evm, t),
-    },
-    token,
-    pool,
-    cfg.security,
-  );
-
+// v1 discovery + enrichment is a single GMGN `market/rank` poll per cycle (Task G3) — every
+// field a card needs (price/mc/liq/vol, holders, security flags, socials, logo) comes back in
+// that one call, so there's no on-chain RPC/Blockscout wiring here anymore. Live-caption
+// editing of the originally posted card is deferred to v1.1 — v1 delivers the original
+// trending card plus separate follow-up posts only.
 const deps: RunCycleDeps = {
-  gecko,
+  gmgn,
   db,
   tracker,
   telegram,
-  securityScan: securityScanDep,
-  tokenInfo: (a) => gecko.tokenInfo(a),
   cfg,
   dry,
 };
@@ -66,9 +46,9 @@ async function tick(now: number): Promise<void> {
 
 let interval: NodeJS.Timeout | undefined;
 
-// Re-entrancy guard: a slow cycle (many sequential enrich RPC calls) can exceed `pollSeconds`,
-// so setInterval would otherwise overlap ticks and the same not-yet-recorded pool could get
-// posted twice. Skip a tick entirely rather than let two run concurrently.
+// Re-entrancy guard: a slow cycle (a slow GMGN response, Telegram retries/backoff) can exceed
+// `pollSeconds`, so setInterval would otherwise overlap ticks and the same not-yet-recorded
+// token could get posted twice. Skip a tick entirely rather than let two run concurrently.
 let running = false;
 async function guardedTick(now: number): Promise<void> {
   if (running) {
@@ -95,7 +75,6 @@ function shutdown(signal: string): void {
   log('info', `${signal} received, shutting down`);
   if (interval) clearInterval(interval);
   db.close();
-  evm.close();
   process.exit(0);
 }
 
