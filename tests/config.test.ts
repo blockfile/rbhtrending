@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadConfig, loadSecrets } from '../src/config';
@@ -44,6 +44,48 @@ describe('loadConfig', () => {
 
   it('throws ENOENT when config file does not exist', () => {
     expect(() => loadConfig('nonexistent.json')).toThrow(/ENOENT/);
+  });
+
+  it('loads the promo section with tiers, prices, and payment settings', () => {
+    const cfg = loadConfig();
+    expect(typeof cfg.promo.enabled).toBe('boolean');
+    expect(typeof cfg.promo.paymentAddress).toBe('string');
+    expect(cfg.promo.confirmations).toBeGreaterThan(0);
+    expect(cfg.promo.leaderboardSize).toBe(12);
+    expect(cfg.promo.pendingMinutes).toBeGreaterThan(0);
+    expect(cfg.promo.tiers.top3.maxRank).toBe(3);
+    expect(cfg.promo.tiers.top8.maxRank).toBe(8);
+    expect(cfg.promo.tiers.top12.maxRank).toBe(12);
+    expect(cfg.promo.tiers.top3.prices['3']).toBeGreaterThan(0);
+    expect(cfg.promo.tiers.top3.prices['24']).toBeGreaterThan(0);
+  });
+
+  it('throws when promo is enabled without a valid 0x payment address', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'rbh-'));
+    try {
+      const cfgPath = join(tmpDir, 'config.json');
+      const base = JSON.parse(readFileSync('config.json', 'utf8'));
+      base.promo.enabled = true;
+      base.promo.paymentAddress = '';
+      writeFileSync(cfgPath, JSON.stringify(base));
+      expect(() => loadConfig(cfgPath)).toThrow('config.json promo.enabled requires a valid promo.paymentAddress (0x…)');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts promo enabled with a valid payment address', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'rbh-'));
+    try {
+      const cfgPath = join(tmpDir, 'config.json');
+      const base = JSON.parse(readFileSync('config.json', 'utf8'));
+      base.promo.enabled = true;
+      base.promo.paymentAddress = '0xCA00000000000000000000000000000000CAFE00';
+      writeFileSync(cfgPath, JSON.stringify(base));
+      expect(() => loadConfig(cfgPath)).not.toThrow();
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it('throws specific error when numeric field is missing (trending.minLiquidityUsd)', () => {

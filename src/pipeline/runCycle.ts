@@ -45,7 +45,7 @@ export interface RunCycleDeps {
  * remains gate-passing and unposted. Neither applies to the tracked-token follow-up branch
  * above, which always runs first and is unaffected.
  */
-export async function runCycle(deps: RunCycleDeps, now: number): Promise<void> {
+export async function runCycle(deps: RunCycleDeps, now: number): Promise<GmgnToken[]> {
   const tokens = await fetchTrending(deps.gmgn);
   const coldStart = deps.db.postCount() === 0;
   let postedThisCycle = 0;
@@ -93,6 +93,9 @@ export async function runCycle(deps: RunCycleDeps, now: number): Promise<void> {
   } catch (err) {
     log('warn', `runCycle: sweep failed: ${(err as Error).message}`);
   }
+
+  // the fetched list feeds the promo leaderboard's organic ranks — no second GMGN call
+  return tokens;
 }
 
 async function fetchTrending(gmgn: GmgnLike): Promise<GmgnToken[]> {

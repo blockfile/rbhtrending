@@ -387,3 +387,58 @@ describe('Telegram', () => {
     expect(calls).toBe(1);
   });
 });
+
+describe('Telegram promo-bot methods', () => {
+  function capture(responseBody = '{"ok":true,"result":{"message_id":5}}') {
+    const captured: Array<{ url: string; body: any }> = [];
+    const f = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      captured.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : null });
+      return new Response(responseBody, { status: 200 });
+    }) as unknown as typeof fetch;
+    return { captured, f };
+  }
+
+  it('sendTo posts to an explicit chat id (DM) instead of the channel', async () => {
+    const { captured, f } = capture();
+    const r = await new Telegram('T', '42', f).sendTo(777, { text: 'hi' });
+    expect(r.ok).toBe(true);
+    expect(captured[0].url).toBe('https://api.telegram.org/botT/sendMessage');
+    expect(captured[0].body).toMatchObject({ chat_id: 777, text: 'hi' });
+  });
+
+  it('getUpdates long-polls with offset and allowed_updates and returns the result array', async () => {
+    const { captured, f } = capture('{"ok":true,"result":[{"update_id":9,"message":{"text":"/trend"}}]}');
+    const updates = await new Telegram('T', '42', f).getUpdates(8);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].update_id).toBe(9);
+    expect(captured[0].url).toBe('https://api.telegram.org/botT/getUpdates');
+    expect(captured[0].body).toMatchObject({ offset: 8, timeout: 25, allowed_updates: ['message', 'callback_query'] });
+  });
+
+  it('getUpdates returns [] on failure instead of throwing', async () => {
+    const f = (async () => new Response('err', { status: 500 })) as unknown as typeof fetch;
+    expect(await new Telegram('T', '42', f).getUpdates(0)).toEqual([]);
+  });
+
+  it('answerCallbackQuery acknowledges the pressed button', async () => {
+    const { captured, f } = capture('{"ok":true}');
+    await new Telegram('T', '42', f).answerCallbackQuery('cbq1');
+    expect(captured[0].url).toBe('https://api.telegram.org/botT/answerCallbackQuery');
+    expect(captured[0].body).toMatchObject({ callback_query_id: 'cbq1' });
+  });
+
+  it('pinChatMessage pins silently in the channel', async () => {
+    const { captured, f } = capture('{"ok":true}');
+    const ok = await new Telegram('T', '42', f).pinChatMessage(123);
+    expect(ok).toBe(true);
+    expect(captured[0].url).toBe('https://api.telegram.org/botT/pinChatMessage');
+    expect(captured[0].body).toMatchObject({ chat_id: '42', message_id: 123, disable_notification: true });
+  });
+
+  it('getMe returns the bot username, or null on failure', async () => {
+    const { f } = capture('{"ok":true,"result":{"username":"robintrenchbot"}}');
+    expect(await new Telegram('T', '42', f).getMe()).toBe('robintrenchbot');
+    const bad = (async () => new Response('err', { status: 500 })) as unknown as typeof fetch;
+    expect(await new Telegram('T', '42', bad).getMe()).toBeNull();
+  });
+});

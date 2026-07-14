@@ -20,7 +20,7 @@ export interface SendResult {
 // --- Robinhood Chain link targets ------------------------------------------------------
 // GMGN is a full trading terminal for this chain — Chart and Trade both point there.
 // Blockscout base — confirmed live at robinhoodchain.blockscout.com.
-const GMGN_TOKEN_BASE = 'https://gmgn.ai/robinhood/token';
+export const GMGN_TOKEN_BASE = 'https://gmgn.ai/robinhood/token';
 const BLOCKSCOUT_BASE = 'https://robinhoodchain.blockscout.com';
 
 // GMGN's own logo URLs (gmgn.ai/external-res/…) sit behind a Cloudflare JS challenge that 403s
@@ -64,7 +64,7 @@ export function buildButtons(
 
 // --- Card formatting ---------------------------------------------------------------------
 
-function usdOrQ(v: number | 'unknown' | undefined): string {
+export function usdOrQ(v: number | 'unknown' | undefined): string {
   if (v === undefined || v === 'unknown') return '?';
   const abs = Math.abs(v);
   if (abs >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
@@ -179,18 +179,23 @@ export class Telegram {
   ) {}
 
   /**
-   * Send a message. A plain string sends text; a payload with `photoUrl` sends an
-   * image card (caption + buttons) and, if Telegram can't fetch the image, falls
-   * back to a text message so an alert is never lost to a bad image URL.
+   * Send a message to the configured channel. A plain string sends text; a payload with
+   * `photoUrl` sends an image card (caption + buttons) and, if Telegram can't fetch the image,
+   * falls back to a text message so an alert is never lost to a bad image URL.
    * Returns the delivered message's id so the caller can live-edit it later.
    */
   async send(payload: string | { text: string; photoUrl?: string; buttons?: Keyboard }): Promise<SendResult> {
+    return this.sendTo(this.chatId, payload);
+  }
+
+  /** Same as `send`, but to an explicit chat id — used for order-bot DMs. */
+  async sendTo(chatId: string | number, payload: string | { text: string; photoUrl?: string; buttons?: Keyboard }): Promise<SendResult> {
     const p = typeof payload === 'string' ? { text: payload } : payload;
     const markup = p.buttons?.length ? { reply_markup: { inline_keyboard: p.buttons } } : {};
 
     if (p.photoUrl) {
       const sent = await this.post('sendPhoto', {
-        chat_id: this.chatId, photo: p.photoUrl, caption: p.text, parse_mode: 'HTML', ...markup,
+        chat_id: chatId, photo: p.photoUrl, caption: p.text, parse_mode: 'HTML', ...markup,
       });
       if (sent.ok) return { ok: true, messageId: sent.messageId, photo: true };
       // image couldn't be fetched/sent (e.g. dead gateway) — fall through to a plain text message
@@ -198,10 +203,57 @@ export class Telegram {
     }
 
     const sent = await this.post('sendMessage', {
-      chat_id: this.chatId, text: p.text, parse_mode: 'HTML',
+      chat_id: chatId, text: p.text, parse_mode: 'HTML',
       link_preview_options: { is_disabled: false }, ...markup,
     });
     return { ok: sent.ok, messageId: sent.messageId, photo: false };
+  }
+
+  /**
+   * Long-poll for bot updates (DMs + button presses). 25s server-side timeout; returns `[]` on
+   * any failure so the order-bot loop just polls again. `offset` must be last update_id + 1.
+   */
+  async getUpdates(offset: number): Promise<Array<{ update_id: number; message?: any; callback_query?: any }>> {
+    const j = await this.call('getUpdates', {
+      offset, timeout: 25, allowed_updates: ['message', 'callback_query'],
+    }, 35_000);
+    return Array.isArray(j?.result) ? j.result : [];
+  }
+
+  /** Acknowledge an inline-button press (stops the client-side spinner). Best-effort. */
+  async answerCallbackQuery(id: string): Promise<void> {
+    await this.call('answerCallbackQuery', { callback_query_id: id }, 10_000);
+  }
+
+  /** Pin a message in the channel (bot must be admin with pin rights). */
+  async pinChatMessage(messageId: number): Promise<boolean> {
+    const j = await this.call('pinChatMessage', {
+      chat_id: this.chatId, message_id: messageId, disable_notification: true,
+    }, 10_000);
+    return j?.ok === true;
+  }
+
+  /** The bot's own username (for t.me deep links), or null if unavailable. */
+  async getMe(): Promise<string | null> {
+    const j = await this.call('getMe', {}, 10_000);
+    const username = j?.result?.username;
+    return typeof username === 'string' ? username : null;
+  }
+
+  /** Single-attempt raw call returning the parsed response body, or null on any failure. */
+  private async call(method: string, body: object, timeoutMs: number): Promise<any | null> {
+    try {
+      const res = await this.fetchFn(`https://api.telegram.org/bot${this.botToken}/${method}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) return null;
+      return await res.json().catch(() => null);
+    } catch {
+      return null;
+    }
   }
 
   /**

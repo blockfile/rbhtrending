@@ -6,6 +6,10 @@ import { Telegram } from './telegram';
 import { Tracker } from './pipeline/trending';
 import { log } from './logger';
 import { runCycle, type RunCycleDeps } from './pipeline/runCycle';
+import { PromoService } from './promo/service';
+import { PaymentWatcher } from './promo/payments';
+import { OrderBot } from './promo/orderBot';
+import { erc20SymbolFetcher } from './promo/erc20';
 
 const dry = process.argv.includes('--dry');
 
@@ -35,9 +39,29 @@ const deps: RunCycleDeps = {
   dry,
 };
 
+// Paid ⭐ trending slots (v2): the DM order bot + payment watcher + pinned leaderboard only run
+// live — a dry run must never take orders or touch the channel. Missing RH_RPC_URL degrades to
+// "orders can be taken but never auto-activate", which is useless, so it disables promo too.
+let promo: PromoService | null = null;
+let orderBot: OrderBot | null = null;
+if (cfg.promo.enabled && !dry) {
+  if (!secrets.rhRpcUrl) {
+    log('warn', 'promo: enabled but RH_RPC_URL is missing — paid slots disabled (no payment detection)');
+  } else {
+    const watcher = new PaymentWatcher(secrets.rhRpcUrl, cfg.promo, db);
+    promo = new PromoService(telegram, db, cfg.promo, watcher);
+    orderBot = new OrderBot(telegram, db, cfg.promo, erc20SymbolFetcher(secrets.rhRpcUrl));
+    void orderBot.run();
+    log('info', `promo: paid trending slots enabled — payments to ${cfg.promo.paymentAddress}`);
+  }
+} else if (cfg.promo.enabled && dry) {
+  log('info', 'promo: skipped in dry run');
+}
+
 async function tick(now: number): Promise<void> {
   try {
-    await runCycle(deps, now);
+    const tokens = await runCycle(deps, now);
+    if (promo) await promo.tick(tokens, now);
   } catch (err) {
     // A bad cycle must never kill the process — the next tick just tries again.
     log('error', `tick failed: ${(err as Error).message}`);
@@ -74,6 +98,7 @@ async function main(): Promise<void> {
 function shutdown(signal: string): void {
   log('info', `${signal} received, shutting down`);
   if (interval) clearInterval(interval);
+  orderBot?.stop();
   db.close();
   process.exit(0);
 }

@@ -18,7 +18,19 @@ const TRENDING_CFG: TrendingConfig = {
 };
 const FOLLOWUP_CFG: FollowUpConfig = { windowMinutes: 120, liveEditSec: 45 };
 const BUTTONS_CFG: ButtonsConfig = { chart: true, scan: true, trade: true };
-const CFG: AppConfig = { trending: TRENDING_CFG, followUp: FOLLOWUP_CFG, buttons: BUTTONS_CFG };
+const PROMO_CFG: AppConfig['promo'] = {
+  enabled: false,
+  paymentAddress: '',
+  confirmations: 3,
+  leaderboardSize: 12,
+  pendingMinutes: 60,
+  tiers: {
+    top3: { maxRank: 3, slots: 3, prices: { '3': 0.1 } },
+    top8: { maxRank: 8, slots: 5, prices: { '3': 0.08 } },
+    top12: { maxRank: 12, slots: 4, prices: { '3': 0.06 } },
+  },
+};
+const CFG: AppConfig = { trending: TRENDING_CFG, followUp: FOLLOWUP_CFG, buttons: BUTTONS_CFG, promo: PROMO_CFG };
 
 function token(overrides: Partial<GmgnToken> = {}): GmgnToken {
   return {

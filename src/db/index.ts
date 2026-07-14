@@ -8,6 +8,36 @@ export interface PostRow {
   sponsored: number;
 }
 
+export type OrderStatus = 'pending' | 'active' | 'expired' | 'cancelled';
+
+export interface OrderRow {
+  id: number;
+  chatId: number;
+  address: string;
+  symbol: string;
+  tier: string;
+  hours: number;
+  /** Exact quoted payment amount in wei, as a decimal string (unique across open orders —
+   * this is how an incoming transfer is matched back to its order). */
+  amountWei: string;
+  status: OrderStatus;
+  createdAt: number;
+  paidAt: number | null;
+  txHash: string | null;
+  rank: number | null;
+  expiresAt: number | null;
+}
+
+export interface OrderDraft {
+  chatId: number;
+  address: string;
+  symbol: string;
+  tier: string;
+  hours: number;
+  amountWei: string;
+  now: number;
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tokens (
   address TEXT PRIMARY KEY,
@@ -23,7 +53,31 @@ CREATE TABLE IF NOT EXISTS posts (
   posted_at INTEGER,
   sponsored INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER NOT NULL,
+  address TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  tier TEXT NOT NULL,
+  hours INTEGER NOT NULL,
+  amount_wei TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL,
+  paid_at INTEGER,
+  tx_hash TEXT,
+  rank INTEGER,
+  expires_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
+
+const ORDER_COLS = `id, chat_id AS chatId, address, symbol, tier, hours, amount_wei AS amountWei,
+  status, created_at AS createdAt, paid_at AS paidAt, tx_hash AS txHash, rank, expires_at AS expiresAt`;
 
 export class Db {
   private db: Database.Database;
@@ -84,6 +138,93 @@ export class Db {
       )
       .get(address) as PostRow | undefined;
     return row ?? null;
+  }
+
+  // --- promo orders (paid ⭐ leaderboard slots) -------------------------------------------
+
+  /** Creates a pending order (slot reservation) and returns its id. */
+  createOrder(d: OrderDraft): number {
+    const r = this.db
+      .prepare(
+        `INSERT INTO orders (chat_id, address, symbol, tier, hours, amount_wei, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      )
+      .run(d.chatId, d.address, d.symbol, d.tier, d.hours, d.amountWei, d.now);
+    return Number(r.lastInsertRowid);
+  }
+
+  getOrder(id: number): OrderRow | null {
+    const row = this.db.prepare(`SELECT ${ORDER_COLS} FROM orders WHERE id = ?`).get(id) as OrderRow | undefined;
+    return row ?? null;
+  }
+
+  pendingOrders(): OrderRow[] {
+    return this.db.prepare(`SELECT ${ORDER_COLS} FROM orders WHERE status = 'pending' ORDER BY id`).all() as OrderRow[];
+  }
+
+  activeOrders(now: number): OrderRow[] {
+    return this.db
+      .prepare(`SELECT ${ORDER_COLS} FROM orders WHERE status = 'active' AND expires_at > ? ORDER BY rank`)
+      .all(now) as OrderRow[];
+  }
+
+  /** True if an open (pending) order already quoted this exact wei amount — quoted amounts
+   * must be unique so an incoming transfer maps to exactly one order. */
+  amountInUse(amountWei: string): boolean {
+    return !!this.db.prepare(`SELECT 1 FROM orders WHERE status = 'pending' AND amount_wei = ?`).get(amountWei);
+  }
+
+  /** Open (pending + active) order count per tier — the inventory check for the slot menu. */
+  openOrderCountByTier(tier: string): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS c FROM orders WHERE tier = ? AND status IN ('pending', 'active')`)
+      .get(tier) as { c: number };
+    return row.c;
+  }
+
+  markPaid(id: number, txHash: string, rank: number, paidAt: number, expiresAt: number): void {
+    this.db
+      .prepare(`UPDATE orders SET status = 'active', tx_hash = ?, rank = ?, paid_at = ?, expires_at = ? WHERE id = ?`)
+      .run(txHash, rank, paidAt, expiresAt, id);
+  }
+
+  /** Cancels pending orders created before `cutoff` (unpaid reservation timeout); returns them
+   * so the caller can notify the buyer. */
+  cancelPendingBefore(cutoff: number): OrderRow[] {
+    const rows = this.db
+      .prepare(`SELECT ${ORDER_COLS} FROM orders WHERE status = 'pending' AND created_at < ?`)
+      .all(cutoff) as OrderRow[];
+    if (rows.length) {
+      this.db.prepare(`UPDATE orders SET status = 'cancelled' WHERE status = 'pending' AND created_at < ?`).run(cutoff);
+    }
+    return rows;
+  }
+
+  /** Expires active orders whose slot has lapsed; returns them so their ranks free up. */
+  expireActiveBefore(now: number): OrderRow[] {
+    const rows = this.db
+      .prepare(`SELECT ${ORDER_COLS} FROM orders WHERE status = 'active' AND expires_at <= ?`)
+      .all(now) as OrderRow[];
+    if (rows.length) {
+      this.db.prepare(`UPDATE orders SET status = 'expired' WHERE status = 'active' AND expires_at <= ?`).run(now);
+    }
+    return rows;
+  }
+
+  /** Leaderboard ranks currently held by live paid slots. */
+  usedRanks(now: number): number[] {
+    return (this.activeOrders(now).map((o) => o.rank).filter((r) => r !== null) as number[]).sort((a, b) => a - b);
+  }
+
+  // --- meta kv (leaderboard message id, last scanned block) --------------------------------
+
+  getMeta(key: string): string | null {
+    const row = this.db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined;
+    return row ? row.value : null;
+  }
+
+  setMeta(key: string, value: string): void {
+    this.db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
   }
 
   close(): void {

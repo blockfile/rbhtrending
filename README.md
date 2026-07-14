@@ -174,12 +174,41 @@ npm run typecheck     # tsc --noEmit
 For production, run it under **pm2** (or an equivalent process manager) as a single long-running
 process — there's nothing to scale horizontally; SQLite state assumes one writer.
 
+## Paid trending slots (⭐ promo)
+
+Self-serve paid placement on a pinned **ROBINHOOD TRENDING** leaderboard, mirroring the Solana
+trending-channel slot-menu model — but with visible ⭐ disclosure (paid rows are labelled; the
+Solana channels' undisclosed-shill approach is a deliberate non-goal).
+
+**Buyer flow:** DM the bot `/trend` → send the token CA (symbol resolves on-chain via
+`eth_call symbol()`) → pick from the 3×3 inline menu (Top 3 / Top 8 / Top 12 × 3h / 6h / 24h)
+→ the bot quotes an **exact unique ETH amount** (price + a few gwei of random dust) to pay to
+`promo.paymentAddress` on Robinhood Chain. The payment watcher scans confirmed blocks via
+`RH_RPC_URL`; when a native transfer matching the exact amount lands, the order auto-activates:
+the buyer gets a DM, a "⭐ PROMOTED" card posts to the channel, and the token takes its
+purchased rank on the pinned leaderboard for the paid duration. Unpaid quotes expire after
+`promo.pendingMinutes`; expired slots free their rank automatically.
+
+**Leaderboard:** one pinned message, live-edited every poll cycle — ⭐ paid slots hold their
+ranks (Top 3 tier = ranks 1–3, Top 8 = 4–8, Top 12 = 9–12), all other ranks fill organically
+from the current GMGN trending order.
+
+**To turn it on:**
+1. Set `promo.paymentAddress` in `config.json` to a wallet you control, and `promo.enabled: true`.
+2. Tune tier prices (`promo.tiers.*.prices` — duration-hours → ETH) and inventory (`slots`).
+3. Make the bot a channel admin with pin rights (leaderboard pinning) and keep `RH_RPC_URL` set
+   (payment detection — promo disables itself without it).
+
+**Operational notes:** payments are matched by exact amount — a transfer with the wrong amount
+is NOT matched and needs a manual refund from the payment wallet (nothing is lost; it's just
+not automated). There is no escrow/refund flow, matching how every service in this market
+operates. Promo never runs in `--dry` mode, and a promo failure never blocks organic alerts.
+
 ## Roadmap / notes
 
 - **Live-card editing is not wired up in v1.** `Telegram.editCaption()` exists and `config.json`
   reserves `followUp.liveEditSec` for it, but `runCycle` only ever sends the original card plus
-  separate follow-up messages — the original card is never edited in place.
-- **Paid "Sponsored" placement is v2.** The `posts` table already has a `sponsored` column
-  (defaults to `0`), but no submission/payment flow or "⭐ Sponsored" card variant ships yet.
+  separate follow-up messages — the original card is never edited in place. (The pinned promo
+  leaderboard *is* live-edited.)
 - This bot is entirely separate from the Solana pump.fun scanner in this account's other repo —
   different chain, different data source, independent process.

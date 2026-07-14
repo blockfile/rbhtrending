@@ -1,5 +1,17 @@
 {
   "trending": { "minLiquidityUsd": 5000, "minVolume1hUsd": 10000, "minBuyers1h": 30, "pollSeconds": 45, "milestones": [2,5,10,25,50,100], "dumpDrawdownPct": 50, "maxPostsPerCycle": 10, "minMcOfAthPct": 20, "minMcOfAthAgeHours": 24 },
   "followUp": { "windowMinutes": 120, "liveEditSec": 45 },
-  "buttons": { "chart": true, "scan": true, "trade": true }
+  "buttons": { "chart": true, "scan": true, "trade": true },
+  "promo": {
+    "enabled": false,
+    "paymentAddress": "",
+    "confirmations": 3,
+    "leaderboardSize": 12,
+    "pendingMinutes": 60,
+    "tiers": {
+      "top3":  { "maxRank": 3,  "slots": 3, "prices": { "3": 0.10, "6": 0.18, "24": 0.60 } },
+      "top8":  { "maxRank": 8,  "slots": 5, "prices": { "3": 0.08, "6": 0.14, "24": 0.45 } },
+      "top12": { "maxRank": 12, "slots": 4, "prices": { "3": 0.06, "6": 0.10, "24": 0.35 } }
+    }
+  }
 }

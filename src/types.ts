@@ -27,10 +27,35 @@ export interface ButtonsConfig {
   trade: boolean;
 }
 
+export type PromoTierKey = 'top3' | 'top8' | 'top12';
+
+export interface PromoTierConfig {
+  /** Highest (worst) leaderboard rank this tier can occupy — top3 covers ranks 1..3, top8
+   * covers 4..8 (everything above the previous tier's maxRank), top12 covers 9..12. */
+  maxRank: number;
+  /** Sellable inventory: how many concurrent orders (pending + active) this tier accepts. */
+  slots: number;
+  /** Duration hours ("3" | "6" | "24") → price in ETH on Robinhood Chain. */
+  prices: Record<string, number>;
+}
+
+/** Paid ⭐-promoted leaderboard placement (v2 roadmap). Payment is native ETH on Robinhood
+ * Chain to `paymentAddress`, matched by exact unique amount, watched via RH_RPC_URL. */
+export interface PromoConfig {
+  enabled: boolean;
+  paymentAddress: string;
+  confirmations: number;
+  leaderboardSize: number;
+  /** Minutes an unpaid order holds its slot reservation before auto-cancelling. */
+  pendingMinutes: number;
+  tiers: Record<PromoTierKey, PromoTierConfig>;
+}
+
 export interface AppConfig {
   trending: TrendingConfig;
   followUp: FollowUpConfig;
   buttons: ButtonsConfig;
+  promo: PromoConfig;
 }
 
 export interface Secrets {

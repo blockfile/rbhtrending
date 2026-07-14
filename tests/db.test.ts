@@ -86,3 +86,84 @@ describe('Db', () => {
     });
   });
 });
+
+describe('Db promo orders', () => {
+  let db: Db;
+  beforeEach(() => { db = new Db(':memory:'); });
+  afterEach(() => { db.close(); });
+
+  const draft = {
+    chatId: 777, address: '0xCA', symbol: 'HOOD', tier: 'top3' as const,
+    hours: 6, amountWei: '100000000001234', now: 1000,
+  };
+
+  it('creates a pending order and reads it back', () => {
+    const id = db.createOrder(draft);
+    const o = db.getOrder(id)!;
+    expect(o.status).toBe('pending');
+    expect(o.chatId).toBe(777);
+    expect(o.address).toBe('0xCA');
+    expect(o.tier).toBe('top3');
+    expect(o.hours).toBe(6);
+    expect(o.amountWei).toBe('100000000001234');
+    expect(o.createdAt).toBe(1000);
+    expect(o.rank).toBeNull();
+  });
+
+  it('lists pending orders and reports quoted amounts in use', () => {
+    db.createOrder(draft);
+    expect(db.pendingOrders()).toHaveLength(1);
+    expect(db.amountInUse('100000000001234')).toBe(true);
+    expect(db.amountInUse('999')).toBe(false);
+  });
+
+  it('counts open (pending + active) orders per tier for inventory', () => {
+    const a = db.createOrder(draft);
+    db.createOrder({ ...draft, address: '0xCB' });
+    db.createOrder({ ...draft, address: '0xCC', tier: 'top8' });
+    db.markPaid(a, '0xTX', 1, 2000, 50_000);
+    expect(db.openOrderCountByTier('top3')).toBe(2); // one active + one pending
+    expect(db.openOrderCountByTier('top8')).toBe(1);
+    expect(db.openOrderCountByTier('top12')).toBe(0);
+  });
+
+  it('markPaid activates the order with tx, rank, and expiry', () => {
+    const id = db.createOrder(draft);
+    db.markPaid(id, '0xTXHASH', 2, 2000, 2000 + 6 * 3_600_000);
+    const o = db.getOrder(id)!;
+    expect(o.status).toBe('active');
+    expect(o.txHash).toBe('0xTXHASH');
+    expect(o.rank).toBe(2);
+    expect(o.paidAt).toBe(2000);
+    expect(o.expiresAt).toBe(2000 + 6 * 3_600_000);
+    expect(db.activeOrders(3000)).toHaveLength(1);
+    expect(db.usedRanks(3000)).toEqual([2]);
+  });
+
+  it('cancelPendingBefore cancels only stale pending orders and returns them', () => {
+    const stale = db.createOrder({ ...draft, now: 1000 });
+    db.createOrder({ ...draft, address: '0xCB', now: 9000 });
+    const cancelled = db.cancelPendingBefore(5000);
+    expect(cancelled.map((o) => o.id)).toEqual([stale]);
+    expect(db.getOrder(stale)!.status).toBe('cancelled');
+    expect(db.pendingOrders()).toHaveLength(1);
+  });
+
+  it('expireActiveBefore expires lapsed active orders and frees their ranks', () => {
+    const id = db.createOrder(draft);
+    db.markPaid(id, '0xTX', 1, 2000, 10_000);
+    expect(db.expireActiveBefore(9_999)).toHaveLength(0);
+    const expired = db.expireActiveBefore(10_000);
+    expect(expired.map((o) => o.id)).toEqual([id]);
+    expect(db.getOrder(id)!.status).toBe('expired');
+    expect(db.usedRanks(11_000)).toEqual([]);
+  });
+
+  it('meta kv stores and overwrites string values', () => {
+    expect(db.getMeta('leaderboard_msg')).toBeNull();
+    db.setMeta('leaderboard_msg', '42');
+    expect(db.getMeta('leaderboard_msg')).toBe('42');
+    db.setMeta('leaderboard_msg', '43');
+    expect(db.getMeta('leaderboard_msg')).toBe('43');
+  });
+});
