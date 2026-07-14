@@ -94,7 +94,7 @@ describe('Db promo orders', () => {
 
   const draft = {
     chatId: 777, address: '0xCA', symbol: 'HOOD', tier: 'top3' as const,
-    hours: 6, amountWei: '100000000001234', now: 1000,
+    hours: 6, amountWei: '100000000000000000', depositAddress: '0xdep01', derivIndex: 0, now: 1000,
   };
 
   it('creates a pending order and reads it back', () => {
@@ -105,16 +105,28 @@ describe('Db promo orders', () => {
     expect(o.address).toBe('0xCA');
     expect(o.tier).toBe('top3');
     expect(o.hours).toBe(6);
-    expect(o.amountWei).toBe('100000000001234');
+    expect(o.amountWei).toBe('100000000000000000');
+    expect(o.depositAddress).toBe('0xdep01');
+    expect(o.derivIndex).toBe(0);
     expect(o.createdAt).toBe(1000);
     expect(o.rank).toBeNull();
+    expect(o.sweepTx).toBeNull();
   });
 
-  it('lists pending orders and reports quoted amounts in use', () => {
+  it('lists pending orders', () => {
     db.createOrder(draft);
     expect(db.pendingOrders()).toHaveLength(1);
-    expect(db.amountInUse('100000000001234')).toBe(true);
-    expect(db.amountInUse('999')).toBe(false);
+    expect(db.pendingOrders()[0].depositAddress).toBe('0xdep01');
+  });
+
+  it('tracks sweep status: paid-but-unswept worklist, cleared by markSwept', () => {
+    const id = db.createOrder(draft);
+    expect(db.unsweptPaidOrders()).toHaveLength(0); // not paid yet
+    db.markPaid(id, '0xTX', 1, 2000, 9_999);
+    expect(db.unsweptPaidOrders().map((o) => o.id)).toEqual([id]);
+    db.markSwept(id, '0xSWEEP');
+    expect(db.unsweptPaidOrders()).toHaveLength(0);
+    expect(db.getOrder(id)!.sweepTx).toBe('0xSWEEP');
   });
 
   it('counts open (pending + active) orders per tier for inventory', () => {
@@ -165,5 +177,36 @@ describe('Db promo orders', () => {
     expect(db.getMeta('leaderboard_msg')).toBe('42');
     db.setMeta('leaderboard_msg', '43');
     expect(db.getMeta('leaderboard_msg')).toBe('43');
+  });
+});
+
+describe('Db comp (admin free) orders', () => {
+  let db: Db;
+  beforeEach(() => { db = new Db(':memory:'); });
+  afterEach(() => db.close());
+
+  const draft = (over = {}) => ({
+    chatId: 1, address: '0xCA', symbol: 'HOOD', tier: 'top3' as const, hours: 6,
+    amountWei: '0', depositAddress: '', derivIndex: 0, now: 1000, ...over,
+  });
+
+  it('marks an order as comp and lists it via pendingCompOrders', () => {
+    const paidId = db.createOrder(draft());
+    const compId = db.createOrder(draft({ comp: true, address: '0xADMIN' }));
+    expect(db.getOrder(compId)!.comp).toBe(1);
+    expect(db.getOrder(paidId)!.comp).toBe(0);
+    expect(db.pendingCompOrders().map((o) => o.id)).toEqual([compId]);
+  });
+
+  it('once activated, a comp order is no longer pending-comp', () => {
+    const id = db.createOrder(draft({ comp: true }));
+    db.markPaid(id, 'comp', 1, 2000, 9_999);
+    expect(db.pendingCompOrders()).toHaveLength(0);
+  });
+
+  it('never lists comp orders for sweeping (they have no deposit funds)', () => {
+    const id = db.createOrder(draft({ comp: true }));
+    db.markPaid(id, 'comp', 1, 2000, 9_999);
+    expect(db.unsweptPaidOrders()).toHaveLength(0);
   });
 });

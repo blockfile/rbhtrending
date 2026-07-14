@@ -17,15 +17,21 @@ export interface OrderRow {
   symbol: string;
   tier: string;
   hours: number;
-  /** Exact quoted payment amount in wei, as a decimal string (unique across open orders —
-   * this is how an incoming transfer is matched back to its order). */
+  /** Exact quoted payment amount in wei, as a decimal string. */
   amountWei: string;
+  /** Per-order deposit wallet the buyer pays into (derived from the promo seed). */
+  depositAddress: string;
+  derivIndex: number;
   status: OrderStatus;
   createdAt: number;
   paidAt: number | null;
   txHash: string | null;
   rank: number | null;
   expiresAt: number | null;
+  /** Hash of the sweep tx that forwarded the deposit into the treasury (null until swept). */
+  sweepTx: string | null;
+  /** 1 = complimentary admin listing (no payment, no deposit wallet, never swept). */
+  comp: number;
 }
 
 export interface OrderDraft {
@@ -35,7 +41,11 @@ export interface OrderDraft {
   tier: string;
   hours: number;
   amountWei: string;
+  depositAddress: string;
+  derivIndex: number;
   now: number;
+  /** True for a complimentary admin listing (skips payment). */
+  comp?: boolean;
 }
 
 const SCHEMA = `
@@ -62,12 +72,16 @@ CREATE TABLE IF NOT EXISTS orders (
   tier TEXT NOT NULL,
   hours INTEGER NOT NULL,
   amount_wei TEXT NOT NULL,
+  deposit_address TEXT NOT NULL DEFAULT '',
+  deriv_index INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',
   created_at INTEGER NOT NULL,
   paid_at INTEGER,
   tx_hash TEXT,
   rank INTEGER,
-  expires_at INTEGER
+  expires_at INTEGER,
+  sweep_tx TEXT,
+  comp INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS meta (
@@ -77,7 +91,8 @@ CREATE TABLE IF NOT EXISTS meta (
 `;
 
 const ORDER_COLS = `id, chat_id AS chatId, address, symbol, tier, hours, amount_wei AS amountWei,
-  status, created_at AS createdAt, paid_at AS paidAt, tx_hash AS txHash, rank, expires_at AS expiresAt`;
+  deposit_address AS depositAddress, deriv_index AS derivIndex, status, created_at AS createdAt,
+  paid_at AS paidAt, tx_hash AS txHash, rank, expires_at AS expiresAt, sweep_tx AS sweepTx, comp`;
 
 export class Db {
   private db: Database.Database;
@@ -146,11 +161,21 @@ export class Db {
   createOrder(d: OrderDraft): number {
     const r = this.db
       .prepare(
-        `INSERT INTO orders (chat_id, address, symbol, tier, hours, amount_wei, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
+        `INSERT INTO orders (chat_id, address, symbol, tier, hours, amount_wei, deposit_address, deriv_index, status, created_at, comp)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       )
-      .run(d.chatId, d.address, d.symbol, d.tier, d.hours, d.amountWei, d.now);
+      .run(d.chatId, d.address, d.symbol, d.tier, d.hours, d.amountWei, d.depositAddress, d.derivIndex, d.now, d.comp ? 1 : 0);
     return Number(r.lastInsertRowid);
+  }
+
+  /** Pending complimentary (admin) listings — activated without payment on the next promo tick. */
+  pendingCompOrders(): OrderRow[] {
+    return this.db.prepare(`SELECT ${ORDER_COLS} FROM orders WHERE status = 'pending' AND comp = 1 ORDER BY id`).all() as OrderRow[];
+  }
+
+  /** Attach the derived deposit wallet to an order once its id (hence derivation index) is known. */
+  setOrderDeposit(id: number, depositAddress: string, derivIndex: number): void {
+    this.db.prepare(`UPDATE orders SET deposit_address = ?, deriv_index = ? WHERE id = ?`).run(depositAddress, derivIndex, id);
   }
 
   getOrder(id: number): OrderRow | null {
@@ -168,12 +193,6 @@ export class Db {
       .all(now) as OrderRow[];
   }
 
-  /** True if an open (pending) order already quoted this exact wei amount — quoted amounts
-   * must be unique so an incoming transfer maps to exactly one order. */
-  amountInUse(amountWei: string): boolean {
-    return !!this.db.prepare(`SELECT 1 FROM orders WHERE status = 'pending' AND amount_wei = ?`).get(amountWei);
-  }
-
   /** Open (pending + active) order count per tier — the inventory check for the slot menu. */
   openOrderCountByTier(tier: string): number {
     const row = this.db
@@ -186,6 +205,19 @@ export class Db {
     this.db
       .prepare(`UPDATE orders SET status = 'active', tx_hash = ?, rank = ?, paid_at = ?, expires_at = ? WHERE id = ?`)
       .run(txHash, rank, paidAt, expiresAt, id);
+  }
+
+  /** Records the sweep tx that forwarded a paid order's deposit into the treasury. */
+  markSwept(id: number, sweepTx: string): void {
+    this.db.prepare(`UPDATE orders SET sweep_tx = ? WHERE id = ?`).run(sweepTx, id);
+  }
+
+  /** Paid orders whose deposit hasn't been forwarded to the treasury yet — the sweep worklist
+   * (includes already-expired ones so funds are never stranded when a slot lapses). */
+  unsweptPaidOrders(): OrderRow[] {
+    return this.db
+      .prepare(`SELECT ${ORDER_COLS} FROM orders WHERE tx_hash IS NOT NULL AND sweep_tx IS NULL AND comp = 0 ORDER BY id`)
+      .all() as OrderRow[];
   }
 
   /** Cancels pending orders created before `cutoff` (unpaid reservation timeout); returns them

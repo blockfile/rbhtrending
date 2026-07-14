@@ -4,10 +4,11 @@
   "buttons": { "chart": true, "scan": true, "trade": true },
   "promo": {
     "enabled": false,
-    "paymentAddress": "",
+    "treasuryAddress": "",
     "confirmations": 3,
     "leaderboardSize": 12,
     "pendingMinutes": 60,
+    "adminChatIds": [],
     "tiers": {
       "top3":  { "maxRank": 3,  "slots": 3, "prices": { "3": 0.10, "6": 0.18, "24": 0.60 } },
       "top8":  { "maxRank": 8,  "slots": 5, "prices": { "3": 0.08, "6": 0.14, "24": 0.45 } },

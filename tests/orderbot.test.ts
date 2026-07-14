@@ -1,14 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { OrderBot } from '../src/promo/orderBot';
+import { WalletStore } from '../src/promo/walletStore';
 import { Db } from '../src/db/index';
 import type { PromoConfig } from '../src/types';
 
+const MNEMONIC = 'test test test test test test test test test test test junk';
+// derived deposit addresses for order ids allocated in-sequence (indices 0, 1, …)
+const DEP0 = '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266';
+
 const PROMO: PromoConfig = {
   enabled: true,
-  paymentAddress: '0xpay0000000000000000000000000000000000aa',
+  treasuryAddress: '0xpay0000000000000000000000000000000000aa',
   confirmations: 3,
   leaderboardSize: 12,
   pendingMinutes: 60,
+  adminChatIds: [],
   tiers: {
     top3: { maxRank: 3, slots: 1, prices: { '3': 0.1, '6': 0.18, '24': 0.6 } },
     top8: { maxRank: 8, slots: 5, prices: { '3': 0.08, '6': 0.14, '24': 0.45 } },
@@ -27,15 +36,21 @@ function press(data: string, chatId = 777) {
 
 describe('OrderBot', () => {
   let db: Db;
+  let dir: string;
+  let wallets: WalletStore;
   let sent: Array<{ chatId: number; text: string; buttons?: any }>;
   let acks: string[];
   let bot: OrderBot;
+  let tg: any;
+  const symbolFn = async (addr: string) => (addr === CA ? 'BLEP' : null);
 
   beforeEach(() => {
     db = new Db(':memory:');
+    dir = mkdtempSync(join(tmpdir(), 'rbh-ob-'));
+    wallets = new WalletStore(join(dir, 'wallets.json'), MNEMONIC);
     sent = [];
     acks = [];
-    const tg = {
+    tg = {
       sendTo: async (chatId: number, p: any) => {
         const payload = typeof p === 'string' ? { text: p } : p;
         sent.push({ chatId, text: payload.text, buttons: payload.buttons });
@@ -43,10 +58,10 @@ describe('OrderBot', () => {
       },
       answerCallbackQuery: async (id: string) => { acks.push(id); },
     };
-    bot = new OrderBot(tg, db, PROMO, async (addr) => (addr === CA ? 'BLEP' : null), () => 0);
+    bot = new OrderBot(tg, db, PROMO, wallets, symbolFn);
   });
 
-  afterEach(() => db.close());
+  afterEach(() => { db.close(); rmSync(dir, { recursive: true, force: true }); });
 
   it('/trend prompts for the token CA', async () => {
     await bot.handleUpdate(dm('/trend'), 1000);
@@ -76,7 +91,7 @@ describe('OrderBot', () => {
     expect(sent[1].buttons).toBeUndefined();
   });
 
-  it('pressing a tier button creates a pending order and quotes the unique amount + wallet', async () => {
+  it('pressing a tier button creates a pending order with its own deposit address and clean amount', async () => {
     await bot.handleUpdate(dm('/trend'), 1000);
     await bot.handleUpdate(dm(CA), 1000);
     await bot.handleUpdate(press('buy:top3:6'), 2000);
@@ -85,12 +100,17 @@ describe('OrderBot', () => {
     const orders = db.pendingOrders();
     expect(orders).toHaveLength(1);
     expect(orders[0]).toMatchObject({ chatId: 777, address: CA, symbol: 'BLEP', tier: 'top3', hours: 6 });
-    // 0.18 ETH + minimum dust (rng()=0) = 0.180000001
-    expect(orders[0].amountWei).toBe('180000001000000000');
+    // clean 0.18 ETH price — no dust, since the address is unique
+    expect(orders[0].amountWei).toBe('180000000000000000');
+    // first order → derivation index 0 → the known deposit address
+    expect(orders[0].depositAddress).toBe(DEP0);
+    expect(orders[0].derivIndex).toBe(0);
+    expect(wallets.get(orders[0].id)?.address).toBe(DEP0);
 
     const quote = sent[2];
-    expect(quote.text).toContain('0.180000001');
-    expect(quote.text).toContain(PROMO.paymentAddress);
+    expect(quote.text).toContain('0.18 ETH');
+    expect(quote.text).toContain(DEP0); // pay to the deposit address, not the treasury
+    expect(quote.text).not.toContain(PROMO.treasuryAddress);
     expect(quote.text).toContain('60 min');
   });
 
@@ -112,5 +132,54 @@ describe('OrderBot', () => {
   it('ignores group-chat messages entirely', async () => {
     await bot.handleUpdate(dm('/trend', 777, 'supergroup'), 1000);
     expect(sent).toHaveLength(0);
+  });
+
+  describe('admin free listing', () => {
+    const ADMIN = 999;
+    const adminBot = () => new OrderBot(tg, db, { ...PROMO, adminChatIds: [ADMIN] }, wallets, symbolFn);
+
+    it('an admin tapping a tier comps a free order — no payment quote, no deposit wallet', async () => {
+      const b = adminBot();
+      await b.handleUpdate(dm('/trend', ADMIN), 1000);
+      await b.handleUpdate(dm(CA, ADMIN), 1000);
+      await b.handleUpdate(press('buy:top3:24', ADMIN), 2000);
+
+      const comp = db.pendingCompOrders();
+      expect(comp).toHaveLength(1);
+      expect(comp[0]).toMatchObject({ chatId: ADMIN, address: CA, symbol: 'BLEP', tier: 'top3', hours: 24, comp: 1 });
+      expect(comp[0].depositAddress).toBe(''); // no deposit wallet for a free listing
+      expect(wallets.get(comp[0].id)).toBeNull();
+
+      const reply = sent[sent.length - 1];
+      expect(reply.text.toLowerCase()).toContain('listed');
+      expect(reply.text).not.toContain('Send'); // not a payment quote
+    });
+
+    it('an admin bypasses a sold-out tier', async () => {
+      const b = adminBot();
+      // fill the single top3 slot with a normal paid order from a non-admin
+      await b.handleUpdate(dm('/trend', 111), 1000);
+      await b.handleUpdate(dm(CA, 111), 1000);
+      await b.handleUpdate(press('buy:top3:6', 111), 2000);
+      expect(db.pendingOrders()).toHaveLength(1);
+
+      // admin can still comp top3 despite it being sold out
+      await b.handleUpdate(dm('/trend', ADMIN), 3000);
+      await b.handleUpdate(dm(CA, ADMIN), 3000);
+      await b.handleUpdate(press('buy:top3:6', ADMIN), 4000);
+
+      expect(db.pendingCompOrders()).toHaveLength(1);
+      expect(sent[sent.length - 1].text.toLowerCase()).not.toContain('sold out');
+    });
+
+    it('a non-admin is never comped (still gets a paid quote)', async () => {
+      const b = adminBot();
+      await b.handleUpdate(dm('/trend', 777), 1000);
+      await b.handleUpdate(dm(CA, 777), 1000);
+      await b.handleUpdate(press('buy:top3:6', 777), 2000);
+      expect(db.pendingCompOrders()).toHaveLength(0);
+      expect(db.pendingOrders()[0].comp).toBe(0);
+      expect(sent[sent.length - 1].text).toContain('Send'); // payment quote
+    });
   });
 });

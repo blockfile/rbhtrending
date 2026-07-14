@@ -50,6 +50,9 @@ function validatePromo(cfg: AppConfig): void {
   ] as Array<[string, unknown]>) {
     if (typeof v !== 'number') throw new Error(`config.json missing numeric field: ${name}`);
   }
+  if (!Array.isArray(p.adminChatIds) || p.adminChatIds.some((id) => typeof id !== 'number')) {
+    throw new Error('config.json promo.adminChatIds must be an array of numbers (Telegram user ids)');
+  }
   for (const key of ['top3', 'top8', 'top12'] as const) {
     const t = p.tiers?.[key];
     if (!t || typeof t.maxRank !== 'number' || typeof t.slots !== 'number' ||
@@ -58,8 +61,8 @@ function validatePromo(cfg: AppConfig): void {
       throw new Error(`config.json missing promo tier: promo.tiers.${key} (maxRank, slots, positive prices)`);
     }
   }
-  if (p.enabled && !/^0x[0-9a-fA-F]{40}$/.test(p.paymentAddress)) {
-    throw new Error('config.json promo.enabled requires a valid promo.paymentAddress (0x…)');
+  if (p.enabled && !/^0x[0-9a-fA-F]{40}$/.test(p.treasuryAddress)) {
+    throw new Error('config.json promo.enabled requires a valid promo.treasuryAddress (0x…)');
   }
 }
 
@@ -80,6 +83,7 @@ export function loadSecrets(env: Record<string, string | undefined> = process.en
     telegramChatId: get('TELEGRAM_CHAT_ID'),
     geckoTerminalApiKey: env['GECKOTERMINAL_API_KEY'] ?? '', // optional
     gmgnApiKey: get('GMGN_API_KEY'),
+    promoMnemonic: env['PROMO_MNEMONIC'] ?? '', // optional — only needed when promo is enabled
   };
 
   if (missing.length) {

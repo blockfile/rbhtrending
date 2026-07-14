@@ -4,44 +4,29 @@ import { log } from '../logger';
 
 export interface PaymentMatch {
   orderId: number;
-  txHash: string;
+  depositAddress: string;
 }
 
-interface RpcTx {
-  to: string | null;
-  value: bigint;
-  hash: string;
-}
-
-/** Pure matcher: a native transfer to the payment wallet whose value equals a pending order's
- * quoted amount exactly is that order's payment. Each order matches at most once (first tx
- * wins); wrong amounts and other recipients are ignored. Address compare is case-insensitive. */
-export function matchPayments(pending: OrderRow[], txs: RpcTx[], paymentAddress: string): PaymentMatch[] {
-  const pay = paymentAddress.toLowerCase();
-  const open = new Map(pending.map((o) => [o.amountWei, o]));
+/** Pure matcher: a pending order is paid once its own deposit address holds at least the quoted
+ * amount (overpayment is fine, underpayment is not). One address per order, so no cross-order
+ * disambiguation is needed. `balances` is keyed by lowercased address. */
+export function matchByBalance(pending: OrderRow[], balances: Record<string, bigint>): PaymentMatch[] {
   const matches: PaymentMatch[] = [];
-  for (const tx of txs) {
-    if ((tx.to ?? '').toLowerCase() !== pay) continue;
-    const order = open.get(tx.value.toString());
-    if (order) {
-      open.delete(tx.value.toString());
-      matches.push({ orderId: order.id, txHash: tx.hash });
+  for (const o of pending) {
+    const bal = balances[o.depositAddress.toLowerCase()] ?? 0n;
+    if (bal >= BigInt(o.amountWei)) {
+      matches.push({ orderId: o.id, depositAddress: o.depositAddress });
     }
   }
   return matches;
 }
 
-/** Hard cap on blocks fetched per tick so a long RPC outage can't turn into a giant catch-up
- * burst; anything older is skipped (with a warning) and would need manual reconciliation. */
-const MAX_BLOCKS_PER_TICK = 400;
-
-const CURSOR_KEY = 'last_scanned_block';
-
 /**
- * Watches Robinhood Chain for order payments: each tick it scans new confirmed blocks
- * (latest − confirmations) for native transfers to the payment wallet and exact-amount-matches
- * them against pending orders. With no pending orders it just fast-forwards the cursor —
- * payment scanning only costs RPC calls while a quote is actually outstanding.
+ * Watches each pending order's own deposit address for its payment. Every tick it reads the
+ * confirmed-block balance (`eth_getBalance` at `latest − confirmations`) of each pending
+ * deposit address in one batched JSON-RPC call and returns the funded ones. With no pending
+ * orders it makes a single `eth_blockNumber` call and returns nothing — payment polling only
+ * costs RPC while a quote is actually outstanding.
  */
 export class PaymentWatcher {
   constructor(
@@ -65,39 +50,26 @@ export class PaymentWatcher {
     return arr.map((r) => r.result);
   }
 
-  /** Scan newly-confirmed blocks; returns payment matches for pending orders. Throws on RPC
-   * failure — the caller catches and simply retries next tick (the cursor only advances after
-   * a successful scan, so nothing is missed). */
+  /** Returns payment matches for pending orders. Throws on RPC failure — the caller catches and
+   * retries next tick (nothing is persisted here, so a failed poll simply re-runs). */
   async tick(): Promise<PaymentMatch[]> {
     const [latestHex] = (await this.rpc([{ method: 'eth_blockNumber', params: [] }])) as [string];
-    const target = parseInt(latestHex, 16) - this.cfg.confirmations;
-    if (!Number.isFinite(target) || target < 1) return [];
+    const confirmed = parseInt(latestHex, 16) - this.cfg.confirmations;
+    if (!Number.isFinite(confirmed) || confirmed < 0) return [];
 
     const pending = this.db.pendingOrders();
-    if (pending.length === 0) {
-      this.db.setMeta(CURSOR_KEY, String(target));
-      return [];
-    }
+    if (pending.length === 0) return [];
 
-    const cursor = this.db.getMeta(CURSOR_KEY);
-    let from = cursor !== null ? parseInt(cursor, 10) + 1 : target;
-    if (target - from + 1 > MAX_BLOCKS_PER_TICK) {
-      log('warn', `payments: scan range ${from}..${target} too large — skipping to last ${MAX_BLOCKS_PER_TICK} blocks`);
-      from = target - MAX_BLOCKS_PER_TICK + 1;
-    }
-    if (from > target) return [];
+    const blockTag = '0x' + confirmed.toString(16);
+    const results = (await this.rpc(
+      pending.map((o) => ({ method: 'eth_getBalance', params: [o.depositAddress, blockTag] })),
+    )) as string[];
 
-    const nums = Array.from({ length: target - from + 1 }, (_, i) => from + i);
-    const blocks = (await this.rpc(
-      nums.map((n) => ({ method: 'eth_getBlockByNumber', params: ['0x' + n.toString(16), true] })),
-    )) as Array<{ transactions?: Array<{ to: string | null; value: string; hash: string }> } | null>;
+    const balances: Record<string, bigint> = {};
+    pending.forEach((o, i) => {
+      balances[o.depositAddress.toLowerCase()] = results[i] ? BigInt(results[i]) : 0n;
+    });
 
-    const txs: RpcTx[] = blocks.flatMap((b) =>
-      (b?.transactions ?? []).map((t) => ({ to: t.to, value: BigInt(t.value), hash: t.hash })),
-    );
-
-    const matches = matchPayments(pending, txs, this.cfg.paymentAddress);
-    this.db.setMeta(CURSOR_KEY, String(target));
-    return matches;
+    return matchByBalance(pending, balances);
   }
 }

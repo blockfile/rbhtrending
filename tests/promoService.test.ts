@@ -6,10 +6,11 @@ import type { GmgnToken, PromoConfig } from '../src/types';
 
 const PROMO: PromoConfig = {
   enabled: true,
-  paymentAddress: '0xpay0000000000000000000000000000000000aa',
+  treasuryAddress: '0xpay0000000000000000000000000000000000aa',
   confirmations: 3,
   leaderboardSize: 12,
   pendingMinutes: 60,
+  adminChatIds: [],
   tiers: {
     top3: { maxRank: 3, slots: 3, prices: { '3': 0.1, '6': 0.18, '24': 0.6 } },
     top8: { maxRank: 8, slots: 5, prices: { '3': 0.08, '6': 0.14, '24': 0.45 } },
@@ -57,15 +58,15 @@ describe('PromoService', () => {
   });
   afterEach(() => db.close());
 
-  function service(matches: Array<{ orderId: number; txHash: string }>[] = []) {
+  function service(matches: Array<{ orderId: number; depositAddress: string }>[] = []) {
     let call = 0;
     const watcher = { tick: async () => matches[call++] ?? [] };
     return new PromoService(tg, db, PROMO, watcher);
   }
 
   it('activates a paid order: rank assigned, buyer notified, ⭐ card posted, leaderboard pinned', async () => {
-    const id = db.createOrder({ chatId: 7, address: '0xca', symbol: 'BLEP', tier: 'top3', hours: 6, amountWei: '1', now: 1000 });
-    const svc = service([[{ orderId: id, txHash: '0xTX' }]]);
+    const id = db.createOrder({ chatId: 7, address: '0xca', symbol: 'BLEP', tier: 'top3', hours: 6, amountWei: '1', depositAddress: '0xdep', derivIndex: 0, now: 1000 });
+    const svc = service([[{ orderId: id, depositAddress: '0xdep' }]]);
 
     await svc.tick([token('AAA', '0xa', 1000)], 2000);
 
@@ -83,6 +84,23 @@ describe('PromoService', () => {
     expect(db.getMeta('leaderboard_msg')).toBeTruthy();
   });
 
+  it('activates a pending comp (admin free) order with no payment match at all', async () => {
+    const id = db.createOrder({ chatId: 3, address: '0xca', symbol: 'MINE', tier: 'top3', hours: 24, amountWei: '0', depositAddress: '', derivIndex: 0, now: 1000, comp: true });
+    const svc = service(); // watcher returns no payment matches ever
+
+    await svc.tick([token('AAA', '0xa', 1000)], 2000);
+
+    const o = db.getOrder(id)!;
+    expect(o.status).toBe('active');
+    expect(o.rank).toBe(1);
+    expect(o.expiresAt).toBe(2000 + 24 * HOUR);
+    expect(db.pendingCompOrders()).toHaveLength(0);
+    expect(tg.channel.some((m) => m.text.includes('PROMOTED') && m.text.includes('MINE'))).toBe(true);
+    const lb = tg.channel.find((m) => m.text.includes('ROBINHOOD TRENDING'))!;
+    expect(lb.text).toContain('1. ⭐');
+    expect(db.unsweptPaidOrders()).toHaveLength(0); // comp orders are never swept
+  });
+
   it('edits the existing pinned leaderboard on later ticks instead of re-sending', async () => {
     const svc = service();
     await svc.tick([token('AAA', '0xa', 1000)], 1000);
@@ -94,7 +112,7 @@ describe('PromoService', () => {
   });
 
   it('cancels stale pending orders and tells the buyer', async () => {
-    db.createOrder({ chatId: 9, address: '0xca', symbol: 'BLEP', tier: 'top3', hours: 6, amountWei: '1', now: 0 });
+    db.createOrder({ chatId: 9, address: '0xca', symbol: 'BLEP', tier: 'top3', hours: 6, amountWei: '1', depositAddress: '0xdep', derivIndex: 0, now: 0 });
     const svc = service();
     await svc.tick([], PROMO.pendingMinutes * 60_000 + 1);
     expect(db.pendingOrders()).toHaveLength(0);
@@ -102,7 +120,7 @@ describe('PromoService', () => {
   });
 
   it('expires lapsed slots, frees the rank, and notifies the buyer', async () => {
-    const id = db.createOrder({ chatId: 5, address: '0xca', symbol: 'BLEP', tier: 'top3', hours: 3, amountWei: '1', now: 0 });
+    const id = db.createOrder({ chatId: 5, address: '0xca', symbol: 'BLEP', tier: 'top3', hours: 3, amountWei: '1', depositAddress: '0xdep', derivIndex: 0, now: 0 });
     db.markPaid(id, '0xTX', 1, 0, 3 * HOUR);
     const svc = service();
 

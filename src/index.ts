@@ -10,6 +10,10 @@ import { PromoService } from './promo/service';
 import { PaymentWatcher } from './promo/payments';
 import { OrderBot } from './promo/orderBot';
 import { erc20SymbolFetcher } from './promo/erc20';
+import { WalletStore } from './promo/walletStore';
+import { Sweeper } from './promo/sweep';
+import { isValidMnemonic } from './promo/wallet';
+import { rankOrganic } from './promo/leaderboard';
 
 const dry = process.argv.includes('--dry');
 
@@ -39,20 +43,25 @@ const deps: RunCycleDeps = {
   dry,
 };
 
-// Paid ⭐ trending slots (v2): the DM order bot + payment watcher + pinned leaderboard only run
-// live — a dry run must never take orders or touch the channel. Missing RH_RPC_URL degrades to
-// "orders can be taken but never auto-activate", which is useless, so it disables promo too.
+// Paid ⭐ trending slots: the DM order bot + payment watcher + sweeper + pinned leaderboard only
+// run live — a dry run must never take orders or touch the channel. Each order gets its own
+// deposit wallet derived from PROMO_MNEMONIC; funds are swept into promo.treasuryAddress. Both
+// RH_RPC_URL (payment detection + sweeping) and a valid PROMO_MNEMONIC are required.
 let promo: PromoService | null = null;
 let orderBot: OrderBot | null = null;
 if (cfg.promo.enabled && !dry) {
   if (!secrets.rhRpcUrl) {
     log('warn', 'promo: enabled but RH_RPC_URL is missing — paid slots disabled (no payment detection)');
+  } else if (!isValidMnemonic(secrets.promoMnemonic)) {
+    log('warn', 'promo: enabled but PROMO_MNEMONIC is missing/invalid — paid slots disabled (cannot derive deposit wallets)');
   } else {
+    const wallets = new WalletStore('data/wallets.json', secrets.promoMnemonic);
     const watcher = new PaymentWatcher(secrets.rhRpcUrl, cfg.promo, db);
-    promo = new PromoService(telegram, db, cfg.promo, watcher);
-    orderBot = new OrderBot(telegram, db, cfg.promo, erc20SymbolFetcher(secrets.rhRpcUrl));
+    const sweeper = new Sweeper(secrets.rhRpcUrl, cfg.promo, db, wallets);
+    promo = new PromoService(telegram, db, cfg.promo, watcher, sweeper);
+    orderBot = new OrderBot(telegram, db, cfg.promo, wallets, erc20SymbolFetcher(secrets.rhRpcUrl));
     void orderBot.run();
-    log('info', `promo: paid trending slots enabled — payments to ${cfg.promo.paymentAddress}`);
+    log('info', `promo: paid trending slots enabled — deposits sweep to ${cfg.promo.treasuryAddress}`);
   }
 } else if (cfg.promo.enabled && dry) {
   log('info', 'promo: skipped in dry run');
@@ -61,7 +70,9 @@ if (cfg.promo.enabled && !dry) {
 async function tick(now: number): Promise<void> {
   try {
     const tokens = await runCycle(deps, now);
-    if (promo) await promo.tick(tokens, now);
+    // The leaderboard's organic ranks are filtered + score-sorted (rankOrganic) rather than
+    // GMGN's raw hotness order, so honeypots/rugs/corpses can't take the top slots.
+    if (promo) await promo.tick(rankOrganic(tokens, cfg.trending, now), now);
   } catch (err) {
     // A bad cycle must never kill the process — the next tick just tries again.
     log('error', `tick failed: ${(err as Error).message}`);

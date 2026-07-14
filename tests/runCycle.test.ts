@@ -20,10 +20,11 @@ const FOLLOWUP_CFG: FollowUpConfig = { windowMinutes: 120, liveEditSec: 45 };
 const BUTTONS_CFG: ButtonsConfig = { chart: true, scan: true, trade: true };
 const PROMO_CFG: AppConfig['promo'] = {
   enabled: false,
-  paymentAddress: '',
+  treasuryAddress: '',
   confirmations: 3,
   leaderboardSize: 12,
   pendingMinutes: 60,
+  adminChatIds: [],
   tiers: {
     top3: { maxRank: 3, slots: 3, prices: { '3': 0.1 } },
     top8: { maxRank: 8, slots: 5, prices: { '3': 0.08 } },

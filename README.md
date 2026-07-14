@@ -182,27 +182,51 @@ Solana channels' undisclosed-shill approach is a deliberate non-goal).
 
 **Buyer flow:** DM the bot `/trend` → send the token CA (symbol resolves on-chain via
 `eth_call symbol()`) → pick from the 3×3 inline menu (Top 3 / Top 8 / Top 12 × 3h / 6h / 24h)
-→ the bot quotes an **exact unique ETH amount** (price + a few gwei of random dust) to pay to
-`promo.paymentAddress` on Robinhood Chain. The payment watcher scans confirmed blocks via
-`RH_RPC_URL`; when a native transfer matching the exact amount lands, the order auto-activates:
-the buyer gets a DM, a "⭐ PROMOTED" card posts to the channel, and the token takes its
-purchased rank on the pinned leaderboard for the paid duration. Unpaid quotes expire after
+→ the bot quotes the clean tier price and a **dedicated deposit address unique to that order**.
+The payment watcher polls each pending order's deposit-address balance (`eth_getBalance` at
+`latest − confirmations`) via `RH_RPC_URL`; once it holds the quoted amount the order
+auto-activates: the buyer gets a DM, a "⭐ PROMOTED" card posts to the channel, the token takes
+its purchased rank on the pinned leaderboard for the paid duration, and the deposit is **swept
+into `promo.treasuryAddress`** (your main wallet). Unpaid quotes expire after
 `promo.pendingMinutes`; expired slots free their rank automatically.
 
+**Per-order deposit wallets.** Each order's deposit address is derived from a single HD seed
+(`PROMO_MNEMONIC` in `.env`) at path `m/44'/60'/0'/0/{index}`. The order → index → address →
+private key mapping is written to `data/wallets.json`, so each deposit wallet is fully
+self-contained (importable/sweepable on its own). ⚠️ **`wallets.json` therefore holds live
+private keys** — it lives under gitignored `data/` so it is never committed, but treat it as
+secret and back it up securely (losing it, if the seed is also lost, means losing any
+un-swept deposits). All deposits gather into `promo.treasuryAddress`; sweeps retry every cycle
+until confirmed, so funds are never stranded (a failed sweep just leaves the ETH in the deposit
+address for the next attempt).
+
 **Leaderboard:** one pinned message, live-edited every poll cycle — ⭐ paid slots hold their
-ranks (Top 3 tier = ranks 1–3, Top 8 = 4–8, Top 12 = 9–12), all other ranks fill organically
-from the current GMGN trending order.
+ranks (Top 3 tier = ranks 1–3, Top 8 = 4–8, Top 12 = 9–12), all other ranks fill organically.
+The organic pool is **not** GMGN's raw hotness order (which honeypots and wash campaigns game):
+it runs through the same quality bar as the alerts — `rankOrganic` drops anything failing the
+trending gate (honeypots, dead-bounces far below ATH, thin liquidity) or grading `danger`, then
+sorts the rest by our own `assess()` score, so a rug can never take a top slot.
+
+**Admin free listings.** Telegram user ids in `promo.adminChatIds` can comp a slot without
+paying: run the same `/trend` flow and tapping any tier lists the token **free and instantly**
+(no payment quote, no deposit wallet), bypassing sold-out. The comped slot behaves like any paid
+one — ⭐-labelled, ranked, expiring on schedule. In a DM the chat id equals your Telegram user
+id (get it from `@userinfobot`); an empty `adminChatIds` means nobody can comp.
 
 **To turn it on:**
-1. Set `promo.paymentAddress` in `config.json` to a wallet you control, and `promo.enabled: true`.
-2. Tune tier prices (`promo.tiers.*.prices` — duration-hours → ETH) and inventory (`slots`).
-3. Make the bot a channel admin with pin rights (leaderboard pinning) and keep `RH_RPC_URL` set
-   (payment detection — promo disables itself without it).
+1. Set `promo.treasuryAddress` in `config.json` to your main wallet, and `promo.enabled: true`.
+2. Set `PROMO_MNEMONIC` in `.env` to a **fresh, dedicated** BIP39 seed phrase (this seed
+   controls every deposit address — keep it secret and backed up).
+3. Tune tier prices (`promo.tiers.*.prices` — duration-hours → ETH) and inventory (`slots`), and
+   put your own Telegram user id in `promo.adminChatIds` so you can list your tokens free.
+4. Make the bot a channel admin with pin rights (leaderboard pinning) and keep `RH_RPC_URL` set
+   (payment detection + sweeping — promo disables itself without either the RPC or the seed).
 
-**Operational notes:** payments are matched by exact amount — a transfer with the wrong amount
-is NOT matched and needs a manual refund from the payment wallet (nothing is lost; it's just
-not automated). There is no escrow/refund flow, matching how every service in this market
-operates. Promo never runs in `--dry` mode, and a promo failure never blocks organic alerts.
+**Operational notes:** payment is detected by balance ≥ the quoted price (overpayment counts;
+underpayment does not and needs a manual refund). There is no escrow/refund flow, matching how
+every service in this market operates. Sweeping leaves a small buffered gas reserve on each
+deposit address; true dust is left behind rather than moved at a loss. Promo never runs in
+`--dry` mode, and a promo failure never blocks organic alerts.
 
 ## Roadmap / notes
 

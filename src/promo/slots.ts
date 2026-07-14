@@ -11,15 +11,12 @@ export function tierRange(tiers: Record<PromoTierKey, PromoTierConfig>, key: Pro
 }
 
 /**
- * Quote a unique payable amount: the tier price in wei plus 1..99999 gwei of random "dust".
- * The dust (≤ ~0.0001 ETH) makes the amount unique among open orders, which is how an incoming
- * transfer to the shared payment wallet is matched back to its order — no per-order deposit
- * addresses needed. Price precision is micro-ETH so config values like 0.18 convert exactly.
+ * The tier price as an exact wei amount. Each order gets its own deposit address, so the amount
+ * itself no longer needs to be unique — the buyer pays the clean price. Precision is micro-ETH
+ * so config values like 0.18 convert exactly (0.18 → 180000000000000000 wei).
  */
-export function quoteAmountWei(priceEth: number, rng: () => number = Math.random): string {
-  const base = BigInt(Math.round(priceEth * 1e6)) * 1_000_000_000_000n;
-  const dust = BigInt(1 + Math.floor(rng() * 99_999)) * 1_000_000_000n;
-  return (base + dust).toString();
+export function priceToWei(priceEth: number): string {
+  return (BigInt(Math.round(priceEth * 1e6)) * 1_000_000_000_000n).toString();
 }
 
 /** Render a wei decimal-string as a trimmed ETH amount ("100000001000000000" → "0.100000001"). */

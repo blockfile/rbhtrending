@@ -39,15 +39,21 @@ export interface PromoTierConfig {
   prices: Record<string, number>;
 }
 
-/** Paid ⭐-promoted leaderboard placement (v2 roadmap). Payment is native ETH on Robinhood
- * Chain to `paymentAddress`, matched by exact unique amount, watched via RH_RPC_URL. */
+/** Paid ⭐-promoted leaderboard placement. Each order gets its own deposit wallet (derived from
+ * the `PROMO_MNEMONIC` HD seed); the buyer pays the clean tier price in native ETH on Robinhood
+ * Chain, the balance is watched via RH_RPC_URL, then swept into `treasuryAddress` (your main
+ * wallet). */
 export interface PromoConfig {
   enabled: boolean;
-  paymentAddress: string;
+  /** Main wallet that received deposits are swept into. */
+  treasuryAddress: string;
   confirmations: number;
   leaderboardSize: number;
   /** Minutes an unpaid order holds its slot reservation before auto-cancelling. */
   pendingMinutes: number;
+  /** Telegram user ids allowed to comp a free listing (in a DM, chat id == user id). Empty =
+   * no free listings. Get your id from @userinfobot. */
+  adminChatIds: number[];
   tiers: Record<PromoTierKey, PromoTierConfig>;
 }
 
@@ -65,6 +71,8 @@ export interface Secrets {
   telegramBotToken: string;
   telegramChatId: string;
   gmgnApiKey: string;
+  /** HD seed phrase for deriving per-order deposit wallets (promo). Empty unless promo is used. */
+  promoMnemonic: string;
 }
 
 /**

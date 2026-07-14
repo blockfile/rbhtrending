@@ -49,10 +49,11 @@ describe('loadConfig', () => {
   it('loads the promo section with tiers, prices, and payment settings', () => {
     const cfg = loadConfig();
     expect(typeof cfg.promo.enabled).toBe('boolean');
-    expect(typeof cfg.promo.paymentAddress).toBe('string');
+    expect(typeof cfg.promo.treasuryAddress).toBe('string');
     expect(cfg.promo.confirmations).toBeGreaterThan(0);
     expect(cfg.promo.leaderboardSize).toBe(12);
     expect(cfg.promo.pendingMinutes).toBeGreaterThan(0);
+    expect(Array.isArray(cfg.promo.adminChatIds)).toBe(true);
     expect(cfg.promo.tiers.top3.maxRank).toBe(3);
     expect(cfg.promo.tiers.top8.maxRank).toBe(8);
     expect(cfg.promo.tiers.top12.maxRank).toBe(12);
@@ -66,9 +67,9 @@ describe('loadConfig', () => {
       const cfgPath = join(tmpDir, 'config.json');
       const base = JSON.parse(readFileSync('config.json', 'utf8'));
       base.promo.enabled = true;
-      base.promo.paymentAddress = '';
+      base.promo.treasuryAddress = '';
       writeFileSync(cfgPath, JSON.stringify(base));
-      expect(() => loadConfig(cfgPath)).toThrow('config.json promo.enabled requires a valid promo.paymentAddress (0x…)');
+      expect(() => loadConfig(cfgPath)).toThrow('config.json promo.enabled requires a valid promo.treasuryAddress (0x…)');
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -80,7 +81,7 @@ describe('loadConfig', () => {
       const cfgPath = join(tmpDir, 'config.json');
       const base = JSON.parse(readFileSync('config.json', 'utf8'));
       base.promo.enabled = true;
-      base.promo.paymentAddress = '0xCA00000000000000000000000000000000CAFE00';
+      base.promo.treasuryAddress = '0xCA00000000000000000000000000000000CAFE00';
       writeFileSync(cfgPath, JSON.stringify(base));
       expect(() => loadConfig(cfgPath)).not.toThrow();
     } finally {

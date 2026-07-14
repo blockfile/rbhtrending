@@ -20,6 +20,10 @@ export interface PaymentWatcherLike {
   tick(): Promise<PaymentMatch[]>;
 }
 
+export interface SweeperLike {
+  tick(): Promise<void>;
+}
+
 const LEADERBOARD_KEY = 'leaderboard_msg';
 const TIER_LABEL: Record<string, string> = { top3: 'Top 3', top8: 'Top 8', top12: 'Top 12' };
 
@@ -38,13 +42,25 @@ export class PromoService {
     private db: Db,
     private cfg: PromoConfig,
     private watcher: PaymentWatcherLike | null,
+    private sweeper: SweeperLike | null = null,
   ) {}
 
   async tick(tokens: GmgnToken[], now: number): Promise<void> {
     await this.sweepPending(now);
     await this.sweepExpired(now);
     await this.settlePayments(now);
+    await this.forwardDeposits();
     await this.updateLeaderboard(tokens, now);
+  }
+
+  /** Forward paid deposits into the treasury (best-effort; retries next tick on failure). */
+  private async forwardDeposits(): Promise<void> {
+    if (!this.sweeper) return;
+    try {
+      await this.sweeper.tick();
+    } catch (err) {
+      log('warn', `promo: sweep pass failed (retrying next cycle): ${(err as Error).message}`);
+    }
   }
 
   private async sweepPending(now: number): Promise<void> {
@@ -62,6 +78,15 @@ export class PromoService {
   }
 
   private async settlePayments(now: number): Promise<void> {
+    // Complimentary admin listings activate with no payment.
+    for (const o of this.db.pendingCompOrders()) {
+      try {
+        await this.activate({ orderId: o.id, depositAddress: 'comp' }, now);
+      } catch (err) {
+        log('error', `promo: activation of comp order #${o.id} failed: ${(err as Error).message}`);
+      }
+    }
+
     if (!this.watcher) return;
     let matches: PaymentMatch[];
     try {
@@ -90,10 +115,11 @@ export class PromoService {
       rank = this.cfg.leaderboardSize;
     }
     const expiresAt = now + o.hours * 3_600_000;
-    this.db.markPaid(o.id, m.txHash, rank, now, expiresAt);
-    log('info', `promo: order #${o.id} ($${o.symbol}) paid via ${m.txHash} — rank ${rank} for ${o.hours}h`);
+    this.db.markPaid(o.id, m.depositAddress, rank, now, expiresAt);
+    log('info', `promo: order #${o.id} ($${o.symbol}) ${o.comp ? 'comped (admin)' : `paid into ${m.depositAddress}`} — rank ${rank} for ${o.hours}h`);
 
-    await this.dm(o.chatId, `✅ Payment received — your ⭐ ${TIER_LABEL[o.tier] ?? o.tier} slot for $${o.symbol} is live at #${rank} for ${o.hours}h.`);
+    const lead = o.comp ? '⭐ Comped' : '✅ Payment received —';
+    await this.dm(o.chatId, `${lead} your ⭐ ${TIER_LABEL[o.tier] ?? o.tier} slot for $${o.symbol} is live at #${rank} for ${o.hours}h.`);
 
     const card = [
       `⭐ <b>PROMOTED</b> — <b>$${escapeHtml(o.symbol)}</b>`,
