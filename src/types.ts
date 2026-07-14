@@ -8,6 +8,12 @@ export interface TrendingConfig {
   /** Max brand-new posts sent per runCycle call (Task G4) — throttles bursts; excess
    * gate-passing tokens are simply picked up again on a later cycle. */
   maxPostsPerCycle: number;
+  /** Dead-bounce filter: once a token is older than `minMcOfAthAgeHours`, its market cap must
+   * be at least `minMcOfAthPct`% of its ATH to post — an old token far below ATH is a rug
+   * corpse twitching on bot buys, not a new trend. Young tokens are exempt because a retrace
+   * off the launch spike is normal. */
+  minMcOfAthPct: number;
+  minMcOfAthAgeHours: number;
 }
 
 export interface FollowUpConfig {

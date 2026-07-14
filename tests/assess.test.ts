@@ -130,6 +130,11 @@ describe('assess', () => {
       expect(assess(token({ sniperCount: 20 })).flags).toEqual(['20 snipers']);
     });
 
+    it('an MC below 20% of ATH pushes "-N% from ATH", not at exactly 20%', () => {
+      expect(assess(token({ marketCapUsd: 22_600, athMarketCapUsd: 1_100_000 })).flags).toEqual(['-98% from ATH']);
+      expect(assess(token({ marketCapUsd: 220_000, athMarketCapUsd: 1_100_000 })).flags).toEqual([]);
+    });
+
     it('pushes every triggered flag in the documented order', () => {
       const allBad = token({
         honeypot: true,
@@ -143,6 +148,8 @@ describe('assess', () => {
         botDegenPct: 70,
         ratTraderPct: 40,
         sniperCount: 25,
+        marketCapUsd: 10_000,
+        athMarketCapUsd: 240_000,
       });
       expect(assess(allBad).flags).toEqual([
         'honeypot',
@@ -156,6 +163,7 @@ describe('assess', () => {
         'bots 70%',
         'insiders 40%',
         '25 snipers',
+        '-96% from ATH',
       ]);
     });
   });
@@ -191,6 +199,13 @@ describe('assess', () => {
       expect(assess(token({ lpLockedPct: 19 })).grade).toBe('danger');
       // boundary: exactly 20 does not force danger (still a flag => warn, since <50)
       expect(assess(token({ lpLockedPct: 20 })).grade).toBe('warn');
+    });
+
+    it('is warn (via the informational ATH flag, no score penalty) for a deep-drawdown token', () => {
+      const a = assess(neutralToken({ marketCapUsd: 22_600, athMarketCapUsd: 1_100_000 }));
+      expect(a.flags).toEqual(['-98% from ATH']);
+      expect(a.score).toBe(88); // informational only — the gate filters old corpses; young ones just get flagged
+      expect(a.grade).toBe('warn');
     });
 
     it('a score below 40 forces danger even without a hard security condition', () => {

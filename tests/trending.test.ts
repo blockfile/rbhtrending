@@ -10,23 +10,60 @@ const TRENDING_CFG: TrendingConfig = {
   milestones: [2, 5, 10],
   dumpDrawdownPct: 50,
   maxPostsPerCycle: 10,
+  minMcOfAthPct: 20,
+  minMcOfAthAgeHours: 24,
 };
+
+const NOW = 1_760_000_000_000;
+const HOUR = 3_600_000;
 
 const gateToken = (over: Partial<GmgnToken> = {}): GmgnToken =>
   ({ liquidityUsd: 20000, volumeUsd: 50000, buys: 100, honeypot: false, ...over } as GmgnToken);
 
 describe('passesGate', () => {
   it('passes a liquid, active, non-honeypot token', () => {
-    expect(passesGate(gateToken(), TRENDING_CFG)).toBe(true);
+    expect(passesGate(gateToken(), TRENDING_CFG, NOW)).toBe(true);
   });
   it('hard-filters confirmed honeypots even when liquid + active', () => {
-    expect(passesGate(gateToken({ honeypot: true }), TRENDING_CFG)).toBe(false);
+    expect(passesGate(gateToken({ honeypot: true }), TRENDING_CFG, NOW)).toBe(false);
   });
   it('fails below the liquidity floor', () => {
-    expect(passesGate(gateToken({ liquidityUsd: 100 }), TRENDING_CFG)).toBe(false);
+    expect(passesGate(gateToken({ liquidityUsd: 100 }), TRENDING_CFG, NOW)).toBe(false);
   });
   it('passes on buyers alone when volume is low', () => {
-    expect(passesGate(gateToken({ volumeUsd: 0, buys: 50 }), TRENDING_CFG)).toBe(true);
+    expect(passesGate(gateToken({ volumeUsd: 0, buys: 50 }), TRENDING_CFG, NOW)).toBe(true);
+  });
+
+  describe('dead-bounce filter (old tokens far below ATH)', () => {
+    // the $ZA case: 5 days old, $22.6k MC vs $1.1M ATH — liquid and "active" but a corpse
+    const corpse = gateToken({
+      marketCapUsd: 22_600,
+      athMarketCapUsd: 1_100_000,
+      createdAt: NOW - 5 * 24 * HOUR,
+    });
+
+    it('filters an old token sitting below the ATH floor even when liquid + active', () => {
+      expect(passesGate(corpse, TRENDING_CFG, NOW)).toBe(false);
+    });
+
+    it('does not filter a young token retracing off its launch spike', () => {
+      expect(passesGate({ ...corpse, createdAt: NOW - 2 * HOUR }, TRENDING_CFG, NOW)).toBe(true);
+    });
+
+    it('applies from exactly minMcOfAthAgeHours onwards', () => {
+      expect(passesGate({ ...corpse, createdAt: NOW - 24 * HOUR }, TRENDING_CFG, NOW)).toBe(false);
+      expect(passesGate({ ...corpse, createdAt: NOW - 23 * HOUR }, TRENDING_CFG, NOW)).toBe(true);
+    });
+
+    it('does not filter an old token at or above the ATH floor (20% boundary passes)', () => {
+      expect(passesGate({ ...corpse, marketCapUsd: 220_000 }, TRENDING_CFG, NOW)).toBe(true);
+      expect(passesGate({ ...corpse, marketCapUsd: 500_000 }, TRENDING_CFG, NOW)).toBe(true);
+    });
+
+    it('exempts tokens with unknown age or unknown ATH', () => {
+      expect(passesGate({ ...corpse, createdAt: 0 }, TRENDING_CFG, NOW)).toBe(true);
+      expect(passesGate({ ...corpse, athMarketCapUsd: 0 }, TRENDING_CFG, NOW)).toBe(true);
+    });
   });
 });
 

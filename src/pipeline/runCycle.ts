@@ -60,7 +60,7 @@ export async function runCycle(deps: RunCycleDeps, now: number): Promise<void> {
         continue;
       }
 
-      if (passesGate(t, deps.cfg.trending) && !deps.db.alreadyPosted(t.address) && deps.tracker.shouldPost(t.address)) {
+      if (passesGate(t, deps.cfg.trending, now) && !deps.db.alreadyPosted(t.address) && deps.tracker.shouldPost(t.address)) {
         if (coldStart) {
           // Silent seed: mark as posted (so it never back-alerts) without sending, tracking, or
           // even assessing/formatting it — this token was already trending before boot.

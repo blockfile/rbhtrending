@@ -12,6 +12,8 @@ export function loadConfig(path = 'config.json'): AppConfig {
     ['trending.pollSeconds', cfg.trending?.pollSeconds],
     ['trending.dumpDrawdownPct', cfg.trending?.dumpDrawdownPct],
     ['trending.maxPostsPerCycle', cfg.trending?.maxPostsPerCycle],
+    ['trending.minMcOfAthPct', cfg.trending?.minMcOfAthPct],
+    ['trending.minMcOfAthAgeHours', cfg.trending?.minMcOfAthAgeHours],
     ['followUp.windowMinutes', cfg.followUp?.windowMinutes],
     ['followUp.liveEditSec', cfg.followUp?.liveEditSec],
   ];

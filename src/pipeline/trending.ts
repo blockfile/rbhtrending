@@ -1,16 +1,31 @@
 import type { GmgnToken, TrendingConfig, FollowUpConfig } from '../types';
 
 /**
- * Pure trending gate: does this token's current activity clear the configured thresholds?
- * Confirmed honeypots are hard-filtered here — they never post, get seeded, or tracked.
- * Liquidity must always clear the floor; either volume or buyer count clearing its own floor
- * is enough on top of that. GMGN-native (Task G3) — reads a `GmgnToken`'s `volumeUsd`/`buys`.
+ * Dead-bounce check: an old token sitting far below its ATH is a rug corpse whose burst of
+ * bot/bounce buys can still satisfy the activity gate (GMGN's rank list is activity-based and
+ * happily re-lists them). Applies only from `minMcOfAthAgeHours` of age — young tokens
+ * retracing off their launch spike are normal — and only when both age and ATH are known.
  */
-export function passesGate(t: GmgnToken, cfg: TrendingConfig): boolean {
+function isDeadBounce(t: GmgnToken, cfg: TrendingConfig, now: number): boolean {
+  if (!t.createdAt || !(t.athMarketCapUsd > 0)) return false;
+  const ageHours = (now - t.createdAt) / 3_600_000;
+  if (ageHours < cfg.minMcOfAthAgeHours) return false;
+  return t.marketCapUsd < t.athMarketCapUsd * (cfg.minMcOfAthPct / 100);
+}
+
+/**
+ * Pure trending gate: does this token's current activity clear the configured thresholds?
+ * Confirmed honeypots and dead bounces are hard-filtered here — they never post, get seeded,
+ * or tracked. Liquidity must always clear the floor; either volume or buyer count clearing its
+ * own floor is enough on top of that. GMGN-native (Task G3) — reads a `GmgnToken`'s
+ * `volumeUsd`/`buys`.
+ */
+export function passesGate(t: GmgnToken, cfg: TrendingConfig, now: number): boolean {
   return (
     !t.honeypot &&
     t.liquidityUsd >= cfg.minLiquidityUsd &&
-    (t.volumeUsd >= cfg.minVolume1hUsd || t.buys >= cfg.minBuyers1h)
+    (t.volumeUsd >= cfg.minVolume1hUsd || t.buys >= cfg.minBuyers1h) &&
+    !isDeadBounce(t, cfg, now)
   );
 }
 

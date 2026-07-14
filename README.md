@@ -66,6 +66,7 @@ between tokens; 100 now means "clean AND strongly backed", not just "no rug flag
 | `bots N%` | bot-trader share (`bot_degen_rate`) > 50% |
 | `insiders N%` | insider/rat-trader supply (`rat_trader_amount_rate`) > 20% |
 | `N snipers` | sniper count ≥ 20 |
+| `-N% from ATH` | market cap below 20% of ATH (informational, no score hit — old ones are gate-filtered, so this marks young retraces) |
 
 **Grade:** `danger` if honeypot OR sell tax > 30% OR LP-lock < 20% OR score < 40; else `warn` if
 any flag fired OR score < 70; else `safe`.
@@ -86,7 +87,10 @@ any flag fired OR score < 70; else `safe`.
 Clamped to `0..100`.
 
 **Coverage model:** the trending gate is about activity (liquidity/volume/buyers), not safety —
-a flagged token still posts, with its warnings visible on the card. Nothing is silently hidden.
+a flagged token still posts, with its warnings visible on the card. Nothing is silently hidden,
+with two exceptions that never post: confirmed honeypots, and **dead bounces** — tokens older
+than `minMcOfAthAgeHours` sitting below `minMcOfAthPct`% of their ATH, whose burst of bot/bounce
+buys would otherwise satisfy the activity gate (GMGN's rank list happily re-lists such corpses).
 
 ## Startup behavior
 
@@ -146,6 +150,8 @@ leftover from before the on-chain WS listener was removed; don't read it as a li
    | `trending.milestones` | multiples (e.g. `2,5,10,25,50,100`) that fire "up Nx" follow-ups |
    | `trending.dumpDrawdownPct` | drawdown off peak market cap that fires a dump follow-up |
    | `trending.maxPostsPerCycle` | cap on brand-new posts sent in one poll cycle |
+   | `trending.minMcOfAthPct` | dead-bounce filter: once old enough, MC must be ≥ this % of ATH to post |
+   | `trending.minMcOfAthAgeHours` | dead-bounce filter applies only to tokens older than this |
    | `followUp.windowMinutes` | how long a posted token stays tracked for follow-ups before its tracking window expires |
    | `followUp.liveEditSec` | reserved cadence for the (not-yet-wired) live-edit ticker — see Roadmap |
    | `buttons.chart` / `scan` / `trade` | toggle each inline button on the card (the 📋 Copy CA button is always on) |

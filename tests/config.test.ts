@@ -13,6 +13,8 @@ describe('loadConfig', () => {
     expect(cfg.trending.pollSeconds).toBe(45);
     expect(cfg.trending.dumpDrawdownPct).toBe(50);
     expect(cfg.trending.maxPostsPerCycle).toBe(10);
+    expect(cfg.trending.minMcOfAthPct).toBe(20);
+    expect(cfg.trending.minMcOfAthAgeHours).toBe(24);
     expect(typeof cfg.trending.minLiquidityUsd).toBe('number');
   });
 
@@ -116,6 +118,8 @@ describe('loadConfig', () => {
           pollSeconds: 45,
           dumpDrawdownPct: 50,
           maxPostsPerCycle: 10,
+          minMcOfAthPct: 20,
+          minMcOfAthAgeHours: 24,
           milestones: [],
         },
         followUp: {
@@ -147,6 +151,8 @@ describe('loadConfig', () => {
           pollSeconds: 45,
           dumpDrawdownPct: 50,
           maxPostsPerCycle: 10,
+          minMcOfAthPct: 20,
+          minMcOfAthAgeHours: 24,
           milestones: [2, 5, 'ten', 25, 50, 100],
         },
         followUp: {
@@ -178,6 +184,8 @@ describe('loadConfig', () => {
           pollSeconds: 45,
           dumpDrawdownPct: 50,
           maxPostsPerCycle: 10,
+          minMcOfAthPct: 20,
+          minMcOfAthAgeHours: 24,
           milestones: [2, 5, 10, 25, 50, 100],
         },
         followUp: {

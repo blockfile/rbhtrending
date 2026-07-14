@@ -42,6 +42,12 @@ export function assess(t: GmgnToken): Assessment {
   if (t.botDegenPct > 50) flags.push(`bots ${Math.round(t.botDegenPct)}%`);
   if (t.ratTraderPct > 20) flags.push(`insiders ${Math.round(t.ratTraderPct)}%`);
   if (t.sniperCount >= 20) flags.push(`${t.sniperCount} snipers`);
+  // Informational (no score deduction): the gate already blocks OLD deep-drawdown tokens, so in
+  // practice this shows only on young ones — where "-85% from ATH" is exactly what a buyer
+  // wants to see before aping a retrace. 20% matches the gate's default minMcOfAthPct.
+  if (t.athMarketCapUsd > 0 && t.marketCapUsd < t.athMarketCapUsd * 0.2) {
+    flags.push(`${Math.round(((t.marketCapUsd - t.athMarketCapUsd) / t.athMarketCapUsd) * 100)}% from ATH`);
+  }
 
   let score = 88;
 

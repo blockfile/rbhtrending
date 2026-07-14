@@ -13,6 +13,8 @@ const TRENDING_CFG: TrendingConfig = {
   milestones: [2, 5, 10],
   dumpDrawdownPct: 50,
   maxPostsPerCycle: 10,
+  minMcOfAthPct: 20,
+  minMcOfAthAgeHours: 24,
 };
 const FOLLOWUP_CFG: FollowUpConfig = { windowMinutes: 120, liveEditSec: 45 };
 const BUTTONS_CFG: ButtonsConfig = { chart: true, scan: true, trade: true };
