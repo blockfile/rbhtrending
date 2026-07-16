@@ -106,6 +106,40 @@ export class PromoService {
     return { ok: true, symbol: o.symbol };
   }
 
+  /**
+   * Admin move of a promoted token to a better (or specific) leaderboard rank, by address. Only
+   * ever moves into a FREE rank — it never evicts a paying customer (if the target is occupied it
+   * refuses). With no `targetRank`, moves to the lowest free rank, and only if that beats where it
+   * is now. The pinned board reflects the move on the next tick.
+   */
+  async promoteByAddress(address: string, _now: number, targetRank?: number): Promise<{ ok: boolean; symbol?: string; rank?: number; reason?: string }> {
+    const o = this.db.activeOrderByAddress(address);
+    if (!o) return { ok: false, reason: 'no active slot for that token' };
+
+    const size = this.cfg.leaderboardSize;
+    const usedByOthers = new Set(this.db.usedRanks(_now).filter((r) => r !== o.rank));
+
+    let rank: number;
+    if (targetRank !== undefined) {
+      if (targetRank < 1 || targetRank > size) return { ok: false, reason: `rank must be 1..${size}` };
+      if (usedByOthers.has(targetRank)) return { ok: false, reason: `rank ${targetRank} is taken — /delist it first` };
+      rank = targetRank;
+    } else {
+      let best: number | null = null;
+      for (let r = 1; r <= size; r++) {
+        if (!usedByOthers.has(r)) { best = r; break; }
+      }
+      if (best === null || (o.rank !== null && best >= o.rank)) {
+        return { ok: false, reason: 'already at the best available rank' };
+      }
+      rank = best;
+    }
+
+    this.db.setOrderRank(o.id, rank);
+    log('info', `promo: order #${o.id} ($${o.symbol}) promoted to rank ${rank} by admin`);
+    return { ok: true, symbol: o.symbol, rank };
+  }
+
   /** Forward paid deposits into the treasury (best-effort; retries next tick on failure). */
   private async forwardDeposits(): Promise<void> {
     if (!this.sweeper) return;

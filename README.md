@@ -228,6 +228,11 @@ id (get it from `@userinfobot`); an empty `adminChatIds` means nobody can comp.
 card is deleted from the channel, and the buyer is DM'd that it was removed. No refund is issued
 automatically — that stays a manual call (you have the buyer's deposit address on file).
 
+**Admin promote.** `/promote <token address> [rank]` moves an active slot **up into a free
+rank** — with no rank it jumps to the best open position (e.g. #2 → #1 when #1 is empty), or you
+can name a specific rank. It only ever moves a token into an **unoccupied** rank; it never evicts
+a paying customer (if the target is taken it refuses and tells you to `/delist` that one first).
+
 **To turn it on:**
 1. Set `promo.treasuryAddress` in `config.json` to your main wallet, and `promo.enabled: true`.
 2. Set `PROMO_MNEMONIC` in `.env` to a **fresh, dedicated** BIP39 seed phrase (this seed

@@ -63,6 +63,7 @@ if (cfg.promo.enabled && !dry) {
     orderBot = new OrderBot(
       telegram, db, cfg.promo, wallets, erc20SymbolFetcher(secrets.rhRpcUrl),
       (addr) => promoSvc.delistByAddress(addr, Date.now()), // admin /delist
+      (addr, rank) => promoSvc.promoteByAddress(addr, Date.now(), rank), // admin /promote
     );
     void orderBot.run();
     log('info', `promo: paid trending slots enabled — deposits sweep to ${cfg.promo.treasuryAddress}`);

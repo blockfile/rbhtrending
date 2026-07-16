@@ -218,4 +218,46 @@ describe('OrderBot', () => {
       expect(sent[sent.length - 1].text.toLowerCase()).toContain('/delist');
     });
   });
+
+  describe('admin /promote', () => {
+    const ADMIN = 999;
+    let promoteCalls: Array<[string, number | undefined]>;
+    const withPromote = () => {
+      promoteCalls = [];
+      return new OrderBot(tg, db, { ...PROMO, adminChatIds: [ADMIN] }, wallets, symbolFn, undefined,
+        async (addr: string, rank?: number) => { promoteCalls.push([addr, rank]); return addr === CA ? { ok: true, symbol: 'BLEP', rank: rank ?? 1 } : { ok: false, reason: 'no active slot for that token' }; });
+    };
+
+    it('an admin /promote <CA> promotes to the best free rank', async () => {
+      const b = withPromote();
+      await b.handleUpdate(dm(`/promote ${CA}`, ADMIN), 1000);
+      expect(promoteCalls).toEqual([[CA, undefined]]);
+      expect(sent[sent.length - 1].text).toContain('#1');
+    });
+
+    it('an admin /promote <CA> <rank> promotes to a specific rank', async () => {
+      const b = withPromote();
+      await b.handleUpdate(dm(`/promote ${CA} 2`, ADMIN), 1000);
+      expect(promoteCalls).toEqual([[CA, 2]]);
+    });
+
+    it('reports the failure reason (e.g. occupied rank)', async () => {
+      const b = withPromote();
+      await b.handleUpdate(dm('/promote 0x0000000000000000000000000000000000000000', ADMIN), 1000);
+      expect(sent[sent.length - 1].text.toLowerCase()).toContain('no active slot');
+    });
+
+    it('a non-admin /promote is ignored', async () => {
+      const b = withPromote();
+      await b.handleUpdate(dm(`/promote ${CA}`, 777), 1000);
+      expect(promoteCalls).toEqual([]);
+    });
+
+    it('/promote with a bad address shows usage', async () => {
+      const b = withPromote();
+      await b.handleUpdate(dm('/promote notanaddress', ADMIN), 1000);
+      expect(promoteCalls).toEqual([]);
+      expect(sent[sent.length - 1].text.toLowerCase()).toContain('/promote');
+    });
+  });
 });

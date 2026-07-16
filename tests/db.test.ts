@@ -166,6 +166,14 @@ describe('Db promo orders', () => {
     expect(db.activeOrderByAddress('0xabcdef')).toBeNull();
   });
 
+  it('setOrderRank moves an active order to a new rank', () => {
+    const id = db.createOrder(draft);
+    db.markPaid(id, '0xTX', 2, 0, 999_999);
+    db.setOrderRank(id, 1);
+    expect(db.getOrder(id)!.rank).toBe(1);
+    expect(db.usedRanks(1000)).toEqual([1]);
+  });
+
   it('activeOrderByAddress returns null for an unknown or non-active token', () => {
     const id = db.createOrder(draft); // pending, not active
     expect(db.activeOrderByAddress(draft.address)).toBeNull();

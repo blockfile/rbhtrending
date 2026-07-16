@@ -261,6 +261,11 @@ export class Db {
     this.db.prepare(`UPDATE orders SET sweep_tx = ? WHERE id = ?`).run(sweepTx, id);
   }
 
+  /** Move an order to a new leaderboard rank (admin /promote). */
+  setOrderRank(id: number, rank: number): void {
+    this.db.prepare(`UPDATE orders SET rank = ? WHERE id = ?`).run(rank, id);
+  }
+
   /** Records that the promoted card was (re)posted for this order at `now` as message `msgId`. */
   recordBump(id: number, now: number, msgId: number): void {
     this.db.prepare(`UPDATE orders SET last_bumped_at = ?, bump_msg_id = ? WHERE id = ?`).run(now, msgId, id);

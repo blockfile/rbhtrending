@@ -124,6 +124,53 @@ describe('PromoService', () => {
     expect(r.ok).toBe(false);
   });
 
+  describe('promoteByAddress', () => {
+    const active = (address: string, symbol: string, rank: number) => {
+      const id = db.createOrder({ chatId: 1, address, symbol, tier: 'top3', hours: 24, amountWei: '1', depositAddress: '0xdep', derivIndex: 0, now: 0 });
+      db.markPaid(id, '0xTX', rank, 0, 24 * HOUR);
+      return id;
+    };
+
+    it('moves a token up to the best free rank when none is specified', async () => {
+      const id = active('0xtok', 'TOK', 2); // at #2, #1 free
+      const svc = service();
+      const r = await svc.promoteByAddress('0xTOK', 1000);
+      expect(r.ok).toBe(true);
+      expect(r.rank).toBe(1);
+      expect(db.getOrder(id)!.rank).toBe(1);
+    });
+
+    it('moves a token to a specific free rank when given one', async () => {
+      const id = active('0xtok', 'TOK', 3);
+      const svc = service();
+      const r = await svc.promoteByAddress('0xtok', 1000, 1);
+      expect(r.rank).toBe(1);
+      expect(db.getOrder(id)!.rank).toBe(1);
+    });
+
+    it('never evicts: refuses to promote onto an occupied rank', async () => {
+      active('0xa', 'AAA', 1); // #1 taken by a paid token
+      const bId = active('0xb', 'BBB', 2);
+      const svc = service();
+      const r = await svc.promoteByAddress('0xb', 1000, 1);
+      expect(r.ok).toBe(false);
+      expect((r.reason ?? '').toLowerCase()).toContain('taken');
+      expect(db.getOrder(bId)!.rank).toBe(2); // unchanged
+    });
+
+    it('reports when there is no better free rank to move into', async () => {
+      active('0xtop', 'TOP', 1); // already #1
+      const svc = service();
+      const r = await svc.promoteByAddress('0xtop', 1000);
+      expect(r.ok).toBe(false);
+    });
+
+    it('returns ok:false for a token with no active slot', async () => {
+      const svc = service();
+      expect((await svc.promoteByAddress('0xnope', 1000)).ok).toBe(false);
+    });
+  });
+
   it('records the first promoted card as the initial bump on activation', async () => {
     const id = db.createOrder({ chatId: 7, address: '0xca', symbol: 'BLEP', tier: 'top3', hours: 6, amountWei: '1', depositAddress: '0xdep', derivIndex: 0, now: 1000 });
     const svc = service([[{ orderId: id, depositAddress: '0xdep' }]]);

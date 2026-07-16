@@ -43,6 +43,8 @@ export class OrderBot {
     private symbolFn: (address: string) => Promise<string | null>,
     /** Admin `/delist` handler (removes a promoted token). Injected by index (→ PromoService). */
     private delistFn?: (address: string) => Promise<{ ok: boolean; symbol?: string; reason?: string }>,
+    /** Admin `/promote` handler (moves a token to a free rank). Injected by index (→ PromoService). */
+    private promoteFn?: (address: string, rank?: number) => Promise<{ ok: boolean; symbol?: string; rank?: number; reason?: string }>,
   ) {}
 
   /** Long-poll loop for DMs/button presses. Never throws; `stop()` ends it. */
@@ -95,6 +97,23 @@ export class OrderBot {
         text: r.ok
           ? `🗑 Removed <b>$${escape(r.symbol ?? '')}</b> from the trending board.`
           : `Couldn't delist — ${escape(r.reason ?? 'not found')}.`,
+      });
+      return;
+    }
+
+    // Admin-only: move a token up into a free slot. `/promote <CA> [rank]`.
+    if (this.isAdmin(chatId) && text.startsWith('/promote')) {
+      const [addr, rankStr] = text.slice('/promote'.length).trim().split(/\s+/);
+      const rank = rankStr ? Number(rankStr) : undefined;
+      if (!addr || !CA_RE.test(addr) || (rankStr !== undefined && !Number.isInteger(rank))) {
+        await this.tg.sendTo(chatId, { text: 'Usage: <code>/promote 0x… [rank]</code> — move a token to a free slot (default: best free rank).' });
+        return;
+      }
+      const r = this.promoteFn ? await this.promoteFn(addr.toLowerCase(), rank) : { ok: false, reason: 'promoting unavailable' };
+      await this.tg.sendTo(chatId, {
+        text: r.ok
+          ? `⬆️ Moved <b>$${escape(r.symbol ?? '')}</b> to #${r.rank}.`
+          : `Couldn't promote — ${escape(r.reason ?? 'not found')}.`,
       });
       return;
     }
