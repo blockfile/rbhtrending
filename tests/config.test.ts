@@ -59,6 +59,8 @@ describe('loadConfig', () => {
     expect(cfg.promo.tiers.top12.maxRank).toBe(12);
     expect(cfg.promo.tiers.top3.prices['3']).toBeGreaterThan(0);
     expect(cfg.promo.tiers.top3.prices['24']).toBeGreaterThan(0);
+    expect(cfg.promo.tiers.top3.bumpMinutes).toBe(30);
+    expect(cfg.promo.tiers.top12.bumpMinutes).toBe(90);
   });
 
   it('throws when promo is enabled without a valid 0x payment address', () => {

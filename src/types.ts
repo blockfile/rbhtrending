@@ -37,6 +37,9 @@ export interface PromoTierConfig {
   slots: number;
   /** Duration hours ("3" | "6" | "24") → price in ETH on Robinhood Chain. */
   prices: Record<string, number>;
+  /** Minutes between re-posts ("bumps") of an active slot's promoted card — higher tiers bump
+   * more often (e.g. top3 30, top8 60, top12 90). */
+  bumpMinutes: number;
 }
 
 /** Paid ⭐-promoted leaderboard placement. Each order gets its own deposit wallet (derived from

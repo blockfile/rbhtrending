@@ -32,6 +32,10 @@ export interface OrderRow {
   sweepTx: string | null;
   /** 1 = complimentary admin listing (no payment, no deposit wallet, never swept). */
   comp: number;
+  /** When the promoted card was last (re)posted, and that message's id — drives periodic bumps
+   * and lets the next bump delete the previous post. Null until the slot activates. */
+  lastBumpedAt: number | null;
+  bumpMsgId: number | null;
 }
 
 export interface OrderDraft {
@@ -81,7 +85,9 @@ CREATE TABLE IF NOT EXISTS orders (
   rank INTEGER,
   expires_at INTEGER,
   sweep_tx TEXT,
-  comp INTEGER NOT NULL DEFAULT 0
+  comp INTEGER NOT NULL DEFAULT 0,
+  last_bumped_at INTEGER,
+  bump_msg_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS meta (
@@ -92,7 +98,8 @@ CREATE TABLE IF NOT EXISTS meta (
 
 const ORDER_COLS = `id, chat_id AS chatId, address, symbol, tier, hours, amount_wei AS amountWei,
   deposit_address AS depositAddress, deriv_index AS derivIndex, status, created_at AS createdAt,
-  paid_at AS paidAt, tx_hash AS txHash, rank, expires_at AS expiresAt, sweep_tx AS sweepTx, comp`;
+  paid_at AS paidAt, tx_hash AS txHash, rank, expires_at AS expiresAt, sweep_tx AS sweepTx, comp,
+  last_bumped_at AS lastBumpedAt, bump_msg_id AS bumpMsgId`;
 
 export class Db {
   private db: Database.Database;
@@ -102,6 +109,30 @@ export class Db {
     this.db = new Database(path);
     this.db.pragma('journal_mode = WAL');
     this.db.exec(SCHEMA);
+    this.migrateOrders();
+  }
+
+  /**
+   * Backfill columns added to `orders` after an earlier deploy first created the table.
+   * `CREATE TABLE IF NOT EXISTS` never alters an existing table, so a DB from before the
+   * per-order-wallet / comp work is missing these columns and every promo query throws
+   * "no such column". Idempotent: on a fresh DB the columns already exist and nothing runs.
+   */
+  private migrateOrders(): void {
+    const existing = new Set(
+      (this.db.prepare(`PRAGMA table_info(orders)`).all() as Array<{ name: string }>).map((c) => c.name),
+    );
+    const columns: Array<[string, string]> = [
+      ['deposit_address', `deposit_address TEXT NOT NULL DEFAULT ''`],
+      ['deriv_index', `deriv_index INTEGER NOT NULL DEFAULT 0`],
+      ['sweep_tx', `sweep_tx TEXT`],
+      ['comp', `comp INTEGER NOT NULL DEFAULT 0`],
+      ['last_bumped_at', `last_bumped_at INTEGER`],
+      ['bump_msg_id', `bump_msg_id INTEGER`],
+    ];
+    for (const [name, ddl] of columns) {
+      if (!existing.has(name)) this.db.exec(`ALTER TABLE orders ADD COLUMN ${ddl}`);
+    }
   }
 
   /** First-sight record for a token; leaves `outcome` at its default 'seen'. Idempotent. */
@@ -210,6 +241,11 @@ export class Db {
   /** Records the sweep tx that forwarded a paid order's deposit into the treasury. */
   markSwept(id: number, sweepTx: string): void {
     this.db.prepare(`UPDATE orders SET sweep_tx = ? WHERE id = ?`).run(sweepTx, id);
+  }
+
+  /** Records that the promoted card was (re)posted for this order at `now` as message `msgId`. */
+  recordBump(id: number, now: number, msgId: number): void {
+    this.db.prepare(`UPDATE orders SET last_bumped_at = ?, bump_msg_id = ? WHERE id = ?`).run(now, msgId, id);
   }
 
   /** Paid orders whose deposit hasn't been forwarded to the treasury yet — the sweep worklist

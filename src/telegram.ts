@@ -146,6 +146,58 @@ export function formatCard(t: GmgnToken, a: Assessment): string {
   return lines.join('\n');
 }
 
+export interface PromoCardResult {
+  text: string;
+  photoUrl?: string;
+  buttons: Keyboard;
+}
+
+/** Inline keyboard for a promoted post: a prominent 🚀 Buy (GMGN trade), then Chart / Scan, then
+ * a tap-to-copy contract-address button. */
+function promoButtons(address: string): Keyboard {
+  return [
+    [{ text: '🚀 Buy', url: `${GMGN_TOKEN_BASE}/${address}?tab=trade` }],
+    [{ text: '📊 Chart', url: `${GMGN_TOKEN_BASE}/${address}` }, { text: '🔍 Scan', url: `${BLOCKSCOUT_BASE}/token/${address}` }],
+    [{ text: '📋 Copy CA', copy_text: { text: address } }],
+  ];
+}
+
+/**
+ * Render a paid ⭐ slot's promoted post. With live token data it's a full trending-style photo
+ * card (logo + the same stats block as an alert) under a `⭐ PROMOTED · #rank · time-left`
+ * banner; without it (token not in the current feed) it falls back to a compact text card so a
+ * bump never fails. Always carries the 🚀 Buy keyboard. `hoursLeft` is precomputed by the caller
+ * (so this stays pure/testable). The ⭐ PROMOTED label is always shown — paid slots are disclosed.
+ */
+export function formatPromoCard(args: {
+  symbol: string;
+  address: string;
+  rank: number;
+  hoursLeft: number;
+  token?: GmgnToken;
+  assessment?: Assessment;
+}): PromoCardResult {
+  const { symbol, address, rank, hoursLeft, token, assessment } = args;
+  const banner = `⭐ <b>PROMOTED</b> · #${rank} · ⏳ ${Math.max(0, hoursLeft)}h left`;
+  const buttons = promoButtons(address);
+
+  if (token && assessment) {
+    return {
+      text: `${banner}\n${formatCard(token, assessment)}`,
+      photoUrl: tokenImageUrl(token.address, token.logo),
+      buttons,
+    };
+  }
+
+  const text = [
+    banner,
+    `<b>$${escapeHtml(symbol)}</b> — holding #${rank} on the trending board`,
+    '',
+    `<code>${address}</code>`,
+  ].join('\n');
+  return { text, buttons };
+}
+
 export type FollowUpData =
   | { kind: 'up'; symbol: string; address: string; multiple: number; fromUsd: number; peakUsd: number }
   | { kind: 'dump' | 'window'; symbol: string; address: string; peakUsd: number; nowUsd: number; peakPct: number; nowPct: number };
@@ -230,6 +282,13 @@ export class Telegram {
     const j = await this.call('pinChatMessage', {
       chat_id: this.chatId, message_id: messageId, disable_notification: true,
     }, 10_000);
+    return j?.ok === true;
+  }
+
+  /** Delete a channel message (used to remove the previous bump before posting the next).
+   * Best-effort — an already-deleted or too-old message just returns false. */
+  async deleteMessage(messageId: number): Promise<boolean> {
+    const j = await this.call('deleteMessage', { chat_id: this.chatId, message_id: messageId }, 10_000);
     return j?.ok === true;
   }
 

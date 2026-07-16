@@ -1,5 +1,37 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import Database from 'better-sqlite3';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { Db } from '../src/db/index';
+
+describe('Db schema migration', () => {
+  it('backfills promo columns on an orders table created before they existed', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rbh-mig-'));
+    const path = join(dir, 'old.db');
+    // simulate a DB from an older deploy: orders table WITHOUT the per-order-wallet / comp columns
+    const old = new Database(path);
+    old.exec(`CREATE TABLE orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, address TEXT NOT NULL,
+      symbol TEXT NOT NULL, tier TEXT NOT NULL, hours INTEGER NOT NULL, amount_wei TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, paid_at INTEGER,
+      tx_hash TEXT, rank INTEGER, expires_at INTEGER)`);
+    old.close();
+
+    const db = new Db(path); // constructor must migrate the existing table, not leave it stale
+    const id = db.createOrder({
+      chatId: 1, address: '0xCA', symbol: 'X', tier: 'top3', hours: 6,
+      amountWei: '0', depositAddress: '0xdep', derivIndex: 2, now: 1000,
+    });
+    const o = db.getOrder(id)!;
+    expect(o.depositAddress).toBe('0xdep');
+    expect(o.derivIndex).toBe(2);
+    expect(o.comp).toBe(0);
+    expect(o.sweepTx).toBeNull();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
 
 describe('Db', () => {
   let db: Db;
@@ -117,6 +149,22 @@ describe('Db promo orders', () => {
     db.createOrder(draft);
     expect(db.pendingOrders()).toHaveLength(1);
     expect(db.pendingOrders()[0].depositAddress).toBe('0xdep01');
+  });
+
+  it('records bump time + message id for an active promoted slot', () => {
+    const id = db.createOrder(draft);
+    let o = db.getOrder(id)!;
+    expect(o.lastBumpedAt).toBeNull();
+    expect(o.bumpMsgId).toBeNull();
+    db.recordBump(id, 5000, 4242);
+    o = db.getOrder(id)!;
+    expect(o.lastBumpedAt).toBe(5000);
+    expect(o.bumpMsgId).toBe(4242);
+    // a later bump overwrites both (previous message gets deleted by the caller)
+    db.recordBump(id, 8000, 9999);
+    o = db.getOrder(id)!;
+    expect(o.lastBumpedAt).toBe(8000);
+    expect(o.bumpMsgId).toBe(9999);
   });
 
   it('tracks sweep status: paid-but-unswept worklist, cleared by markSwept', () => {

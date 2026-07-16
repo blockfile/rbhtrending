@@ -19,9 +19,9 @@ const PROMO: PromoConfig = {
   pendingMinutes: 60,
   adminChatIds: [],
   tiers: {
-    top3: { maxRank: 3, slots: 1, prices: { '3': 0.1, '6': 0.18, '24': 0.6 } },
-    top8: { maxRank: 8, slots: 5, prices: { '3': 0.08, '6': 0.14, '24': 0.45 } },
-    top12: { maxRank: 12, slots: 4, prices: { '3': 0.06, '6': 0.1, '24': 0.35 } },
+    top3: { maxRank: 3, slots: 1, bumpMinutes: 30, prices: { '3': 0.1, '6': 0.18, '24': 0.6 } },
+    top8: { maxRank: 8, slots: 5, bumpMinutes: 60, prices: { '3': 0.08, '6': 0.14, '24': 0.45 } },
+    top12: { maxRank: 12, slots: 4, bumpMinutes: 90, prices: { '3': 0.06, '6': 0.1, '24': 0.35 } },
   },
 };
 

@@ -13,9 +13,9 @@ const PROMO: PromoConfig = {
   pendingMinutes: 60,
   adminChatIds: [],
   tiers: {
-    top3: { maxRank: 3, slots: 3, prices: { '3': 0.1, '6': 0.18, '24': 0.6 } },
-    top8: { maxRank: 8, slots: 5, prices: { '3': 0.08, '6': 0.14, '24': 0.45 } },
-    top12: { maxRank: 12, slots: 4, prices: { '3': 0.06, '6': 0.1, '24': 0.35 } },
+    top3: { maxRank: 3, slots: 3, bumpMinutes: 30, prices: { '3': 0.1, '6': 0.18, '24': 0.6 } },
+    top8: { maxRank: 8, slots: 5, bumpMinutes: 60, prices: { '3': 0.08, '6': 0.14, '24': 0.45 } },
+    top12: { maxRank: 12, slots: 4, bumpMinutes: 90, prices: { '3': 0.06, '6': 0.1, '24': 0.35 } },
   },
 };
 
@@ -58,7 +58,7 @@ describe('matchByBalance', () => {
   const order = (id: number, amountWei: string, depositAddress: string) => ({
     id, chatId: 1, address: '0xCA', symbol: 'HOOD', tier: 'top3', hours: 6, amountWei,
     depositAddress, derivIndex: id, status: 'pending' as const, createdAt: 0, paidAt: null,
-    txHash: null, rank: null, expiresAt: null, sweepTx: null, comp: 0,
+    txHash: null, rank: null, expiresAt: null, sweepTx: null, comp: 0, lastBumpedAt: null, bumpMsgId: null,
   });
 
   it('marks an order paid once its deposit address balance reaches the quoted amount', () => {
@@ -194,7 +194,7 @@ describe('formatLeaderboard', () => {
   const paid = (rank: number, symbol: string, address: string) => ({
     id: rank, chatId: 1, address, symbol, tier: 'top3', hours: 6, amountWei: '1',
     depositAddress: '0xdep', derivIndex: rank, status: 'active' as const, createdAt: 0,
-    paidAt: 0, txHash: '0xT', rank, expiresAt: 99, sweepTx: null, comp: 0,
+    paidAt: 0, txHash: '0xT', rank, expiresAt: 99, sweepTx: null, comp: 0, lastBumpedAt: null, bumpMsgId: null,
   });
 
   it('places ⭐ paid slots at their ranks and fills the rest organically, skipping paid addresses', () => {

@@ -56,9 +56,10 @@ function validatePromo(cfg: AppConfig): void {
   for (const key of ['top3', 'top8', 'top12'] as const) {
     const t = p.tiers?.[key];
     if (!t || typeof t.maxRank !== 'number' || typeof t.slots !== 'number' ||
+        typeof t.bumpMinutes !== 'number' || t.bumpMinutes <= 0 ||
         !t.prices || Object.keys(t.prices).length === 0 ||
         Object.values(t.prices).some((price) => typeof price !== 'number' || price <= 0)) {
-      throw new Error(`config.json missing promo tier: promo.tiers.${key} (maxRank, slots, positive prices)`);
+      throw new Error(`config.json missing promo tier: promo.tiers.${key} (maxRank, slots, positive bumpMinutes, positive prices)`);
     }
   }
   if (p.enabled && !/^0x[0-9a-fA-F]{40}$/.test(p.treasuryAddress)) {

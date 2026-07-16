@@ -1,7 +1,8 @@
 import type { Db, OrderRow } from '../db/index';
 import type { GmgnToken, PromoConfig, PromoTierKey } from '../types';
 import type { Keyboard } from '../telegram';
-import { buildButtons, GMGN_TOKEN_BASE } from '../telegram';
+import { formatPromoCard } from '../telegram';
+import { assess } from '../checks/assess';
 import { assignRank } from './slots';
 import { formatLeaderboard } from './leaderboard';
 import type { PaymentMatch } from './payments';
@@ -13,6 +14,7 @@ export interface PromoTelegram {
   sendTo(chatId: string | number, payload: string | { text: string }): Promise<{ ok: boolean }>;
   editCaption(messageId: number, text: string, buttons: Keyboard, photo: boolean): Promise<boolean>;
   pinChatMessage(messageId: number): Promise<boolean>;
+  deleteMessage(messageId: number): Promise<boolean>;
   getMe(): Promise<string | null>;
 }
 
@@ -45,12 +47,48 @@ export class PromoService {
     private sweeper: SweeperLike | null = null,
   ) {}
 
-  async tick(tokens: GmgnToken[], now: number): Promise<void> {
+  /**
+   * @param organic  score-ranked pool for the pinned leaderboard (already filtered/sorted in index).
+   * @param allTokens raw GMGN feed — indexed by address to render promoted cards with live stats.
+   */
+  async tick(organic: GmgnToken[], allTokens: GmgnToken[], now: number): Promise<void> {
+    const byAddr = new Map(allTokens.map((t) => [t.address.toLowerCase(), t]));
     await this.sweepPending(now);
     await this.sweepExpired(now);
-    await this.settlePayments(now);
+    await this.settlePayments(now, byAddr);
     await this.forwardDeposits();
-    await this.updateLeaderboard(tokens, now);
+    await this.bumpActive(now, byAddr);
+    await this.updateLeaderboard(organic, now);
+  }
+
+  /** Re-post ("bump") each active slot's promoted card once its per-tier interval has elapsed,
+   * deleting the previous post so exactly one live promoted message exists per token. */
+  private async bumpActive(now: number, byAddr: Map<string, GmgnToken>): Promise<void> {
+    for (const o of this.db.activeOrders(now)) {
+      const intervalMs = (this.cfg.tiers[o.tier as PromoTierKey]?.bumpMinutes ?? 60) * 60_000;
+      const last = o.lastBumpedAt ?? o.paidAt ?? 0;
+      if (now - last < intervalMs) continue;
+      try {
+        await this.postPromoCard(o, byAddr, now);
+      } catch (err) {
+        log('warn', `promo: bump of order #${o.id} failed (retries next cycle): ${(err as Error).message}`);
+      }
+    }
+  }
+
+  /** Post a promoted card for an active order, first deleting its previous bump message, and
+   * record the new message as the current bump. Shared by activation (first post) and bumps. */
+  private async postPromoCard(o: OrderRow, byAddr: Map<string, GmgnToken>, now: number): Promise<void> {
+    const rank = o.rank ?? this.cfg.leaderboardSize;
+    const hoursLeft = o.expiresAt ? Math.max(0, Math.ceil((o.expiresAt - now) / 3_600_000)) : o.hours;
+    const token = byAddr.get(o.address.toLowerCase());
+    const card = formatPromoCard({
+      symbol: o.symbol, address: o.address, rank, hoursLeft,
+      token, assessment: token ? assess(token) : undefined,
+    });
+    if (o.bumpMsgId) await this.tg.deleteMessage(o.bumpMsgId);
+    const r = await this.tg.send({ text: card.text, photoUrl: card.photoUrl, buttons: card.buttons });
+    if (r.ok && r.messageId) this.db.recordBump(o.id, now, r.messageId);
   }
 
   /** Forward paid deposits into the treasury (best-effort; retries next tick on failure). */
@@ -73,15 +111,16 @@ export class PromoService {
   private async sweepExpired(now: number): Promise<void> {
     for (const o of this.db.expireActiveBefore(now)) {
       log('info', `promo: order #${o.id} ($${o.symbol}) slot ended (rank ${o.rank})`);
+      if (o.bumpMsgId) await this.tg.deleteMessage(o.bumpMsgId); // remove the last promoted card
       await this.dm(o.chatId, `⭐ Your ${TIER_LABEL[o.tier] ?? o.tier} slot for $${o.symbol} has ended. Send /trend to renew.`);
     }
   }
 
-  private async settlePayments(now: number): Promise<void> {
+  private async settlePayments(now: number, byAddr: Map<string, GmgnToken>): Promise<void> {
     // Complimentary admin listings activate with no payment.
     for (const o of this.db.pendingCompOrders()) {
       try {
-        await this.activate({ orderId: o.id, depositAddress: 'comp' }, now);
+        await this.activate({ orderId: o.id, depositAddress: 'comp' }, now, byAddr);
       } catch (err) {
         log('error', `promo: activation of comp order #${o.id} failed: ${(err as Error).message}`);
       }
@@ -97,14 +136,14 @@ export class PromoService {
     }
     for (const m of matches) {
       try {
-        await this.activate(m, now);
+        await this.activate(m, now, byAddr);
       } catch (err) {
         log('error', `promo: activation of order #${m.orderId} failed: ${(err as Error).message}`);
       }
     }
   }
 
-  private async activate(m: PaymentMatch, now: number): Promise<void> {
+  private async activate(m: PaymentMatch, now: number, byAddr: Map<string, GmgnToken>): Promise<void> {
     const o = this.db.getOrder(m.orderId);
     if (!o || o.status !== 'pending') return;
 
@@ -121,13 +160,9 @@ export class PromoService {
     const lead = o.comp ? '⭐ Comped' : '✅ Payment received —';
     await this.dm(o.chatId, `${lead} your ⭐ ${TIER_LABEL[o.tier] ?? o.tier} slot for $${o.symbol} is live at #${rank} for ${o.hours}h.`);
 
-    const card = [
-      `⭐ <b>PROMOTED</b> — <b>$${escapeHtml(o.symbol)}</b>`,
-      `Holding <b>#${rank}</b> on the trending board for ${o.hours}h`,
-      '',
-      `<a href="${GMGN_TOKEN_BASE}/${o.address}">Chart</a> · <code>${o.address}</code>`,
-    ].join('\n');
-    await this.tg.send({ text: card, buttons: buildButtons(o.address, { chart: true, scan: true, trade: true }) });
+    // First promoted card (the initial bump). Re-fetch so postPromoCard sees the paid rank/expiry.
+    const active = this.db.getOrder(o.id);
+    if (active) await this.postPromoCard(active, byAddr, now);
   }
 
   private async updateLeaderboard(tokens: GmgnToken[], now: number): Promise<void> {
@@ -166,8 +201,4 @@ export class PromoService {
       log('warn', `promo: DM to ${chatId} failed: ${(err as Error).message}`);
     }
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

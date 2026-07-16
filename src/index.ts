@@ -70,9 +70,9 @@ if (cfg.promo.enabled && !dry) {
 async function tick(now: number): Promise<void> {
   try {
     const tokens = await runCycle(deps, now);
-    // The leaderboard's organic ranks are filtered + score-sorted (rankOrganic) rather than
-    // GMGN's raw hotness order, so honeypots/rugs/corpses can't take the top slots.
-    if (promo) await promo.tick(rankOrganic(tokens, cfg.trending, now), now);
+    // Leaderboard gets the filtered + score-sorted pool (rankOrganic) so rugs can't take top
+    // slots; promoted cards get the raw feed so a paid token shows live stats even off-rank.
+    if (promo) await promo.tick(rankOrganic(tokens, cfg.trending, now), tokens, now);
   } catch (err) {
     // A bad cycle must never kill the process — the next tick just tries again.
     log('error', `tick failed: ${(err as Error).message}`);

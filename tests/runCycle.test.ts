@@ -26,9 +26,9 @@ const PROMO_CFG: AppConfig['promo'] = {
   pendingMinutes: 60,
   adminChatIds: [],
   tiers: {
-    top3: { maxRank: 3, slots: 3, prices: { '3': 0.1 } },
-    top8: { maxRank: 8, slots: 5, prices: { '3': 0.08 } },
-    top12: { maxRank: 12, slots: 4, prices: { '3': 0.06 } },
+    top3: { maxRank: 3, slots: 3, bumpMinutes: 30, prices: { '3': 0.1 } },
+    top8: { maxRank: 8, slots: 5, bumpMinutes: 60, prices: { '3': 0.08 } },
+    top12: { maxRank: 12, slots: 4, bumpMinutes: 90, prices: { '3': 0.06 } },
   },
 };
 const CFG: AppConfig = { trending: TRENDING_CFG, followUp: FOLLOWUP_CFG, buttons: BUTTONS_CFG, promo: PROMO_CFG };

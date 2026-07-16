@@ -185,10 +185,20 @@ Solana channels' undisclosed-shill approach is a deliberate non-goal).
 → the bot quotes the clean tier price and a **dedicated deposit address unique to that order**.
 The payment watcher polls each pending order's deposit-address balance (`eth_getBalance` at
 `latest − confirmations`) via `RH_RPC_URL`; once it holds the quoted amount the order
-auto-activates: the buyer gets a DM, a "⭐ PROMOTED" card posts to the channel, the token takes
+auto-activates: the buyer gets a DM, a **⭐ PROMOTED card** posts to the channel, the token takes
 its purchased rank on the pinned leaderboard for the paid duration, and the deposit is **swept
 into `promo.treasuryAddress`** (your main wallet). Unpaid quotes expire after
-`promo.pendingMinutes`; expired slots free their rank automatically.
+`promo.pendingMinutes`; expired slots free their rank automatically (and their last promoted
+card is removed).
+
+**Promoted card + bumps.** The promoted post is a full trending-style card — token logo image,
+a `⭐ PROMOTED · #rank · time-left` banner, the same stats block as an organic alert, and a
+prominent **🚀 Buy** button (GMGN trade page) alongside Chart / Scan / Copy-CA. If the token
+isn't in the current GMGN feed that cycle, it falls back to a compact card so a post never fails.
+While the slot is active the card **re-posts on a per-tier timer** (`tiers.*.bumpMinutes` —
+Top 3 every 30 min, Top 8 every 60, Top 12 every 90) so it keeps resurfacing and re-notifying;
+each bump deletes the previous one, so exactly **one** live promoted post exists per token at a
+time. Paid posts always keep the ⭐ PROMOTED label — they are never disguised as organic picks.
 
 **Per-order deposit wallets.** Each order's deposit address is derived from a single HD seed
 (`PROMO_MNEMONIC` in `.env`) at path `m/44'/60'/0'/0/{index}`. The order → index → address →

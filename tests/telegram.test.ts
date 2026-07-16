@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  escapeHtml, formatCard, formatFollowUp, buildButtons, tokenImageUrl, Telegram, ageStr,
+  escapeHtml, formatCard, formatFollowUp, buildButtons, tokenImageUrl, formatPromoCard, Telegram, ageStr,
   type FollowUpData,
 } from '../src/telegram';
 import { assess } from '../src/checks/assess';
@@ -242,6 +242,41 @@ describe('formatCard', () => {
     expect(lines[distIdx - 1]).toBe('');
     expect(lines[secIdx - 1]).toBe('');
     expect(lines[codeIdx - 1]).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatPromoCard
+// ---------------------------------------------------------------------------
+
+describe('formatPromoCard', () => {
+  const BUY_URL = (addr: string) => `https://gmgn.ai/robinhood/token/${addr}?tab=trade`;
+
+  it('rich card: ⭐ PROMOTED banner, rank, time left, full stats, image, and a Buy button', () => {
+    const withLogo = { ...TOKEN, logo: 'https://gmgn.ai/x.webp' };
+    const r = formatPromoCard({ symbol: withLogo.symbol, address: withLogo.address, rank: 2, hoursLeft: 5, token: withLogo, assessment: assess(withLogo) });
+    expect(r.text).toContain('⭐ <b>PROMOTED</b> · #2');
+    expect(r.text).toContain('5h left');
+    expect(r.text).toContain('💰 MC:'); // full trending-card stats block is included
+    expect(r.photoUrl).toBe('https://images.weserv.nl/?url=' + encodeURIComponent('https://gmgn.ai/x.webp'));
+    expect(r.buttons[0][0]).toEqual({ text: '🚀 Buy', url: BUY_URL(withLogo.address) });
+    const flat = r.buttons.flat();
+    expect(flat.some((b) => 'copy_text' in b && b.copy_text.text === withLogo.address)).toBe(true);
+  });
+
+  it('compact fallback when no token data: banner + rank + address + Buy, no image or stats', () => {
+    const r = formatPromoCard({ symbol: 'HOOD', address: '0xTOKEN000000000000000000000000000000001', rank: 4, hoursLeft: 2 });
+    expect(r.text).toContain('⭐ <b>PROMOTED</b> · #4');
+    expect(r.text).toContain('$HOOD');
+    expect(r.text).toContain('<code>0xTOKEN000000000000000000000000000000001</code>');
+    expect(r.text).not.toContain('💰 MC:'); // no stats block without token data
+    expect(r.photoUrl).toBeUndefined();
+    expect(r.buttons[0][0]).toEqual({ text: '🚀 Buy', url: BUY_URL('0xTOKEN000000000000000000000000000000001') });
+  });
+
+  it('escapes the symbol in the compact card', () => {
+    const r = formatPromoCard({ symbol: 'A<B>', address: '0xabc', rank: 1, hoursLeft: 1 });
+    expect(r.text).toContain('$A&lt;B&gt;');
   });
 });
 
