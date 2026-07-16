@@ -8,7 +8,7 @@ export interface PostRow {
   sponsored: number;
 }
 
-export type OrderStatus = 'pending' | 'active' | 'expired' | 'cancelled';
+export type OrderStatus = 'pending' | 'active' | 'expired' | 'cancelled' | 'delisted';
 
 export interface OrderRow {
   id: number;
@@ -222,6 +222,24 @@ export class Db {
     return this.db
       .prepare(`SELECT ${ORDER_COLS} FROM orders WHERE status = 'active' AND expires_at > ? ORDER BY rank`)
       .all(now) as OrderRow[];
+  }
+
+  /** The active promoted order for a token address (case-insensitive), or null — backs /delist. */
+  activeOrderByAddress(address: string): OrderRow | null {
+    const row = this.db
+      .prepare(`SELECT ${ORDER_COLS} FROM orders WHERE status = 'active' AND lower(address) = lower(?)`)
+      .get(address) as OrderRow | undefined;
+    return row ?? null;
+  }
+
+  /** Admin removal of an active slot (e.g. it rugged): mark it 'delisted' so it leaves the
+   * leaderboard and frees its rank. Returns the removed row (for card cleanup / buyer DM), or
+   * null if the order isn't active. */
+  delistOrder(id: number): OrderRow | null {
+    const o = this.getOrder(id);
+    if (!o || o.status !== 'active') return null;
+    this.db.prepare(`UPDATE orders SET status = 'delisted' WHERE id = ?`).run(id);
+    return o;
   }
 
   /** Open (pending + active) order count per tier — the inventory check for the slot menu. */

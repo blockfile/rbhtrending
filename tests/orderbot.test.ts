@@ -182,4 +182,40 @@ describe('OrderBot', () => {
       expect(sent[sent.length - 1].text).toContain('Send'); // payment quote
     });
   });
+
+  describe('admin /delist', () => {
+    const ADMIN = 999;
+    let delistCalls: string[];
+    const withDelist = () => {
+      delistCalls = [];
+      return new OrderBot(tg, db, { ...PROMO, adminChatIds: [ADMIN] }, wallets, symbolFn,
+        async (addr: string) => { delistCalls.push(addr); return addr === CA ? { ok: true, symbol: 'BLEP' } : { ok: false, reason: 'no active slot for that token' }; });
+    };
+
+    it('an admin /delist <CA> calls the delist handler and confirms', async () => {
+      const b = withDelist();
+      await b.handleUpdate(dm(`/delist ${CA}`, ADMIN), 1000);
+      expect(delistCalls).toEqual([CA]);
+      expect(sent[sent.length - 1].text).toContain('BLEP'); // confirmation names the removed token
+    });
+
+    it('reports when the token has no active slot', async () => {
+      const b = withDelist();
+      await b.handleUpdate(dm('/delist 0x0000000000000000000000000000000000000000', ADMIN), 1000);
+      expect(sent[sent.length - 1].text.toLowerCase()).toContain('no active slot');
+    });
+
+    it('a non-admin /delist is ignored (no delist handler call)', async () => {
+      const b = withDelist();
+      await b.handleUpdate(dm(`/delist ${CA}`, 777), 1000);
+      expect(delistCalls).toEqual([]);
+    });
+
+    it('/delist with a bad address tells the admin the format', async () => {
+      const b = withDelist();
+      await b.handleUpdate(dm('/delist notanaddress', ADMIN), 1000);
+      expect(delistCalls).toEqual([]);
+      expect(sent[sent.length - 1].text.toLowerCase()).toContain('/delist');
+    });
+  });
 });

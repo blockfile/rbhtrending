@@ -103,6 +103,27 @@ describe('PromoService', () => {
     expect(db.unsweptPaidOrders()).toHaveLength(0); // comp orders are never swept
   });
 
+  it('delistByAddress removes an active slot: deletes its card, DMs the buyer, frees its rank', async () => {
+    const id = db.createOrder({ chatId: 8, address: '0xrug', symbol: 'RUG', tier: 'top3', hours: 24, amountWei: '1', depositAddress: '0xdep', derivIndex: 0, now: 0 });
+    db.markPaid(id, '0xTX', 1, 0, 24 * HOUR);
+    db.recordBump(id, 0, 777); // its live promoted card is message 777
+    const svc = service();
+
+    const r = await svc.delistByAddress('0xRUG', 1000); // case-insensitive
+    expect(r.ok).toBe(true);
+    expect(r.symbol).toBe('RUG');
+    expect(tg.deleted).toContain(777); // promoted card removed from the channel
+    expect(tg.dms.some((d) => d.chatId === 8 && d.text.toLowerCase().includes('removed'))).toBe(true);
+    expect(db.getOrder(id)!.status).toBe('delisted');
+    expect(db.usedRanks(2000)).toEqual([]); // rank freed
+  });
+
+  it('delistByAddress returns ok:false for a token with no active slot', async () => {
+    const svc = service();
+    const r = await svc.delistByAddress('0xnope', 1000);
+    expect(r.ok).toBe(false);
+  });
+
   it('records the first promoted card as the initial bump on activation', async () => {
     const id = db.createOrder({ chatId: 7, address: '0xca', symbol: 'BLEP', tier: 'top3', hours: 6, amountWei: '1', depositAddress: '0xdep', derivIndex: 0, now: 1000 });
     const svc = service([[{ orderId: id, depositAddress: '0xdep' }]]);

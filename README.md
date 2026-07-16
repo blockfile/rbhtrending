@@ -223,6 +223,11 @@ paying: run the same `/trend` flow and tapping any tier lists the token **free a
 one — ⭐-labelled, ranked, expiring on schedule. In a DM the chat id equals your Telegram user
 id (get it from `@userinfobot`); an empty `adminChatIds` means nobody can comp.
 
+**Admin delist.** An admin can pull a promoted token (e.g. it rugged) by DMing the bot
+`/delist <token address>`: the slot leaves the leaderboard, its rank frees up, its live promoted
+card is deleted from the channel, and the buyer is DM'd that it was removed. No refund is issued
+automatically — that stays a manual call (you have the buyer's deposit address on file).
+
 **To turn it on:**
 1. Set `promo.treasuryAddress` in `config.json` to your main wallet, and `promo.enabled: true`.
 2. Set `PROMO_MNEMONIC` in `.env` to a **fresh, dedicated** BIP39 seed phrase (this seed

@@ -91,6 +91,21 @@ export class PromoService {
     if (r.ok && r.messageId) this.db.recordBump(o.id, now, r.messageId);
   }
 
+  /**
+   * Admin removal of a promoted token (e.g. it rugged), by address. Deletes its live promoted
+   * card, frees its leaderboard rank (the pinned board catches up on the next tick), and DMs the
+   * buyer. No refund is issued — that stays a manual decision. Returns whether a slot was found.
+   */
+  async delistByAddress(address: string, _now: number): Promise<{ ok: boolean; symbol?: string; reason?: string }> {
+    const o = this.db.activeOrderByAddress(address);
+    if (!o) return { ok: false, reason: 'no active slot for that token' };
+    if (o.bumpMsgId) await this.tg.deleteMessage(o.bumpMsgId);
+    this.db.delistOrder(o.id);
+    log('info', `promo: order #${o.id} ($${o.symbol}) delisted by admin`);
+    await this.dm(o.chatId, `⚠️ Your ⭐ ${TIER_LABEL[o.tier] ?? o.tier} slot for $${o.symbol} was removed by an admin.`);
+    return { ok: true, symbol: o.symbol };
+  }
+
   /** Forward paid deposits into the treasury (best-effort; retries next tick on failure). */
   private async forwardDeposits(): Promise<void> {
     if (!this.sweeper) return;

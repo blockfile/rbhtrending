@@ -41,6 +41,8 @@ export class OrderBot {
     private wallets: WalletStore,
     /** Resolves an ERC-20 address to its symbol (null → fall back to a shortened address). */
     private symbolFn: (address: string) => Promise<string | null>,
+    /** Admin `/delist` handler (removes a promoted token). Injected by index (→ PromoService). */
+    private delistFn?: (address: string) => Promise<{ ok: boolean; symbol?: string; reason?: string }>,
   ) {}
 
   /** Long-poll loop for DMs/button presses. Never throws; `stop()` ends it. */
@@ -81,6 +83,22 @@ export class OrderBot {
   }
 
   private async handleMessage(chatId: number, text: string, _now: number): Promise<void> {
+    // Admin-only: remove a promoted token (e.g. it rugged). Non-admins fall through to /trend.
+    if (this.isAdmin(chatId) && text.startsWith('/delist')) {
+      const arg = text.slice('/delist'.length).trim();
+      if (!CA_RE.test(arg)) {
+        await this.tg.sendTo(chatId, { text: 'Usage: <code>/delist 0x…</code> — the token address to remove from trending.' });
+        return;
+      }
+      const r = this.delistFn ? await this.delistFn(arg.toLowerCase()) : { ok: false, reason: 'delisting unavailable' };
+      await this.tg.sendTo(chatId, {
+        text: r.ok
+          ? `🗑 Removed <b>$${escape(r.symbol ?? '')}</b> from the trending board.`
+          : `Couldn't delist — ${escape(r.reason ?? 'not found')}.`,
+      });
+      return;
+    }
+
     if (text === '/trend' || text.startsWith('/start')) {
       this.drafts.set(chatId, 'awaiting_ca');
       await this.tg.sendTo(chatId, {

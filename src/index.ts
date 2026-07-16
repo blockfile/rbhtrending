@@ -59,7 +59,11 @@ if (cfg.promo.enabled && !dry) {
     const watcher = new PaymentWatcher(secrets.rhRpcUrl, cfg.promo, db);
     const sweeper = new Sweeper(secrets.rhRpcUrl, cfg.promo, db, wallets);
     promo = new PromoService(telegram, db, cfg.promo, watcher, sweeper);
-    orderBot = new OrderBot(telegram, db, cfg.promo, wallets, erc20SymbolFetcher(secrets.rhRpcUrl));
+    const promoSvc = promo;
+    orderBot = new OrderBot(
+      telegram, db, cfg.promo, wallets, erc20SymbolFetcher(secrets.rhRpcUrl),
+      (addr) => promoSvc.delistByAddress(addr, Date.now()), // admin /delist
+    );
     void orderBot.run();
     log('info', `promo: paid trending slots enabled — deposits sweep to ${cfg.promo.treasuryAddress}`);
   }

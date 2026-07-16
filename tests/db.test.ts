@@ -151,6 +151,28 @@ describe('Db promo orders', () => {
     expect(db.pendingOrders()[0].depositAddress).toBe('0xdep01');
   });
 
+  it('finds the active order for a token address (case-insensitive), and delistOrder frees its rank', () => {
+    const id = db.createOrder({ ...draft, address: '0xAbCdEf' });
+    db.markPaid(id, '0xTX', 1, 2000, 999_999);
+    // active-by-address lookup is case-insensitive
+    expect(db.activeOrderByAddress('0xabcdef')!.id).toBe(id);
+    expect(db.usedRanks(3000)).toEqual([1]);
+
+    const removed = db.delistOrder(id)!;
+    expect(removed.id).toBe(id);
+    expect(db.getOrder(id)!.status).toBe('delisted');
+    expect(db.activeOrders(3000)).toHaveLength(0); // off the board
+    expect(db.usedRanks(3000)).toEqual([]); // rank freed
+    expect(db.activeOrderByAddress('0xabcdef')).toBeNull();
+  });
+
+  it('activeOrderByAddress returns null for an unknown or non-active token', () => {
+    const id = db.createOrder(draft); // pending, not active
+    expect(db.activeOrderByAddress(draft.address)).toBeNull();
+    expect(db.delistOrder(999)).toBeNull(); // no such order
+    expect(db.getOrder(id)!.status).toBe('pending');
+  });
+
   it('records bump time + message id for an active promoted slot', () => {
     const id = db.createOrder(draft);
     let o = db.getOrder(id)!;
